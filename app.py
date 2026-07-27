@@ -4,6 +4,7 @@ import mimetypes
 from datetime import datetime, timezone
 from flask import Flask, request, render_template, jsonify, send_file
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect as sa_inspect
 from werkzeug.utils import secure_filename
 from video_analyzer import analyze_video, VideoAnalysisError
 
@@ -69,9 +70,39 @@ def _init_db():
     try:
         with app.app_context():
             db.create_all()
+            _migrate_schema()
         _db_initialized = True
     except Exception as e:
         app.logger.warning("No se pudo conectar a la base de datos: %s", e)
+
+
+def _migrate_schema():
+    engine = db.engine
+    inspector = sa_inspect(engine)
+    cols = {c["name"] for c in inspector.get_columns("video")}
+    type_map = {
+        "id": "VARCHAR(36)",
+        "filename": "VARCHAR(255)",
+        "original_name": "VARCHAR(255)",
+        "size": "INTEGER",
+        "container": "VARCHAR(20)",
+        "mime_type": "VARCHAR(100)",
+        "analysis_result": "TEXT",
+        "clamav_result": "VARCHAR(50)",
+        "uploaded_at": "TIMESTAMP",
+    }
+    with engine.connect() as conn:
+        trans = conn.begin()
+        try:
+            for name, raw_type in type_map.items():
+                if name not in cols:
+                    col = Video.__table__.columns.get(name)
+                    nullable = "NULL" if col is None or col.nullable else "NOT NULL"
+                    conn.execute(db.text(f"ALTER TABLE video ADD COLUMN {name} {raw_type} {nullable}"))
+            trans.commit()
+        except Exception:
+            trans.rollback()
+            raise
 
 _init_db()
 
