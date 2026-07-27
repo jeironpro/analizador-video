@@ -17,7 +17,6 @@ app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
-    "connect_args": {"connect_timeout": 10},
 }
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
 
@@ -185,7 +184,10 @@ def upload():
         storage_path = f"{video_id}{ext}"
 
         if cloud_storage.is_available():
-            cloud_storage.upload_file(temp_path, storage_path)
+            try:
+                cloud_storage.upload_file_tus(temp_path, storage_path)
+            except Exception:
+                cloud_storage.upload_file(temp_path, storage_path)
             final_path = temp_path
         else:
             final_path = os.path.join(app.config["UPLOAD_FOLDER"], storage_path)
