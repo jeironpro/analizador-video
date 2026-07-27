@@ -23,7 +23,7 @@ def _get_http_client():
         _http_client = httpx.Client(
             http1=True,
             http2=False,
-            timeout=Timeout(300.0, connect=30.0, pool=None),
+            timeout=Timeout(600.0, connect=30.0, pool=None),
         )
     return _http_client
 
@@ -34,7 +34,7 @@ def _get_client():
         http_client = SyncHttpxClient(
             http1=True,
             http2=False,
-            timeout=Timeout(300.0, connect=30.0),
+            timeout=Timeout(600.0, connect=30.0),
         )
         options = SyncClientOptions(httpx_client=http_client)
         _supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=options)
@@ -48,22 +48,11 @@ def is_available() -> bool:
 def _get_bucket():
     client = _get_client()
     if client is None:
-        raise RuntimeError("Supabase no está configurado (SUPABASE_URL y SUPABASE_KEY requeridos)")
+        raise RuntimeError("Supabase no está configurado")
     return client.storage.from_(SUPABASE_STORAGE_BUCKET)
 
 
-MIME_MAP = {
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mkv": "video/x-matroska",
-    ".avi": "video/x-msvideo",
-    ".mov": "video/quicktime",
-    ".mpeg": "video/mpeg",
-    ".wmv": "video/x-ms-wmv",
-}
-
-
-def _tus_upload(filepath: str, storage_path: str) -> str:
+def upload_tus(filepath: str, storage_path: str) -> str:
     file_size = os.path.getsize(filepath)
     filename = os.path.basename(storage_path)
     filename_b64 = base64.b64encode(filename.encode()).decode()
@@ -83,10 +72,7 @@ def _tus_upload(filepath: str, storage_path: str) -> str:
     response.raise_for_status()
 
     location = response.headers.get("Location") or response.headers.get("location")
-    if not location:
-        upload_url = storage_url
-    else:
-        upload_url = location
+    upload_url = location if location else storage_url
 
     with open(filepath, "rb") as f:
         offset = 0
@@ -106,19 +92,6 @@ def _tus_upload(filepath: str, storage_path: str) -> str:
     return storage_path
 
 
-def upload_file(filepath: str, storage_path: str) -> str:
-    bucket = _get_bucket()
-    ext = os.path.splitext(storage_path)[1].lower()
-    content_type = MIME_MAP.get(ext, "application/octet-stream")
-    with open(filepath, "rb") as f:
-        bucket.upload(storage_path, f, file_options={"content-type": content_type})
-    return storage_path
-
-
-def upload_file_tus(filepath: str, storage_path: str) -> str:
-    return _tus_upload(filepath, storage_path)
-
-
 def download_file(storage_path: str) -> bytes:
     bucket = _get_bucket()
     return bucket.download(storage_path)
@@ -133,29 +106,3 @@ def get_signed_url(storage_path: str) -> str:
     bucket = _get_bucket()
     result = bucket.create_signed_url(storage_path, expires_in=SIGNED_URL_EXPIRY)
     return result.get("signedURL", "")
-
-
-def get_public_url(storage_path: str) -> str:
-    bucket = _get_bucket()
-    return bucket.get_public_url(storage_path)
-
-
-def create_signed_upload_url(storage_path: str) -> dict:
-    bucket = _get_bucket()
-    result = bucket.create_signed_upload_url(storage_path)
-    return result
-
-
-def upload_via_signed_url(signed_url: str, token: str, storage_path: str, filepath: str) -> str:
-    bucket = _get_bucket()
-    with open(filepath, "rb") as f:
-        bucket.upload_to_signed_url(storage_path, token, f)
-    return storage_path
-
-
-def download_to_temp(storage_path: str, temp_dir: str) -> str:
-    data = download_file(storage_path)
-    temp_path = os.path.join(temp_dir, storage_path.replace("/", "_"))
-    with open(temp_path, "wb") as f:
-        f.write(data)
-    return temp_path

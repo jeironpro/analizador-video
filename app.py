@@ -74,7 +74,6 @@ def _init_db():
     except Exception as e:
         app.logger.warning("No se pudo conectar a la base de datos: %s", e)
 
-
 _init_db()
 
 
@@ -131,15 +130,6 @@ def index():
     return render_template("index.html")
 
 
-@app.route("/api/config", methods=["GET"])
-def config():
-    return jsonify({
-        "supabase_url": os.environ.get("SUPABASE_URL", ""),
-        "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
-        "supabase_storage_bucket": os.environ.get("SUPABASE_STORAGE_BUCKET", "videos"),
-    })
-
-
 @app.route("/api/videos", methods=["GET"])
 def list_videos():
     videos = Video.query.order_by(Video.uploaded_at.desc()).all()
@@ -193,21 +183,17 @@ def upload():
         storage_path = f"{video_id}{ext}"
 
         if cloud_storage.is_available():
-            try:
-                cloud_storage.upload_file_tus(temp_path, storage_path)
-            except Exception:
-                cloud_storage.upload_file(temp_path, storage_path)
-            final_path = temp_path
+            cloud_storage.upload_tus(temp_path, storage_path)
         else:
-            final_path = os.path.join(app.config["UPLOAD_FOLDER"], storage_path)
+            dst = os.path.join(app.config["UPLOAD_FOLDER"], storage_path)
             import shutil
-            shutil.move(temp_path, final_path)
+            shutil.move(temp_path, dst)
 
         video = Video(
             id=video_id,
             storage_path=storage_path,
             original_name=safe_name,
-            size=os.path.getsize(final_path),
+            size=os.path.getsize(temp_path),
             container=analysis.get("container", ext.lstrip(".")),
             mime_type=mime_type,
             analysis_result=str(analysis.get("errors", [])),
@@ -233,117 +219,6 @@ def upload():
         return jsonify({"error": f"Error interno: {str(e)}"}), 500
     finally:
         if os.path.exists(temp_path):
-            os.remove(temp_path)
-
-
-@app.route("/api/upload-url", methods=["POST"])
-def upload_url():
-    data = request.get_json(silent=True) or {}
-    filename = data.get("filename", "")
-    if not filename:
-        return jsonify({"error": "filename es requerido"}), 400
-
-    ext = os.path.splitext(filename)[1].lower()
-    video_exts = {".mp4", ".webm", ".mkv", ".avi", ".mov", ".mpeg", ".wmv"}
-    if ext not in video_exts:
-        return jsonify({"error": f"Extensión no permitida: {ext}"}), 400
-
-    video_id = str(uuid.uuid4())
-    storage_path = f"{video_id}{ext}"
-
-    if not cloud_storage.is_available():
-        return jsonify({"error": "Supabase Storage no está configurado"}), 400
-
-    result = cloud_storage.create_signed_upload_url(storage_path)
-    return jsonify({
-        "signed_url": result.get("signedUrl", result.get("signed_url", "")),
-        "token": result.get("token", ""),
-        "storage_path": storage_path,
-        "video_id": video_id,
-    })
-
-
-@app.route("/api/confirm-upload", methods=["POST"])
-def confirm_upload():
-    data = request.get_json(silent=True) or {}
-    storage_path = data.get("storage_path", "")
-    original_name = data.get("original_name", "")
-    video_id = data.get("video_id", "")
-
-    if not storage_path or not original_name:
-        return jsonify({"error": "storage_path y original_name son requeridos"}), 400
-
-    if not video_id:
-        video_id = str(uuid.uuid4())
-
-    temp_path = None
-    try:
-        temp_path = cloud_storage.download_to_temp(
-            storage_path, app.config["TEMP_FOLDER"]
-        )
-
-        valid_size, msg = validate_file_size(temp_path)
-        if not valid_size:
-            cloud_storage.delete_file(storage_path)
-            return jsonify({"error": msg}), 400
-
-        if not cloud_storage.is_available():
-            valid_mime, mime_or_msg = validate_mime_type(temp_path)
-            if not valid_mime:
-                cloud_storage.delete_file(storage_path)
-                return jsonify({"error": mime_or_msg}), 400
-            mime_type = mime_or_msg
-        else:
-            mime_type = "video/mp4"
-
-        clam_ok, clam_msg = scan_with_clamav(temp_path)
-        if not clam_ok:
-            cloud_storage.delete_file(storage_path)
-            return jsonify({"error": f"ClamAV: {clam_msg}"}), 400
-
-        analysis = analyze_video(temp_path)
-
-        if not analysis.get("valid", False):
-            cloud_storage.delete_file(storage_path)
-            errors = analysis.get("errors", [])
-            return jsonify({
-                "error": "Análisis de video fallido",
-                "details": errors
-            }), 400
-
-        ext = os.path.splitext(storage_path)[1].lower()
-        video = Video(
-            id=video_id,
-            storage_path=storage_path,
-            original_name=secure_filename(original_name) or f"video{ext}",
-            size=os.path.getsize(temp_path),
-            container=analysis.get("container", ext.lstrip(".")),
-            mime_type=mime_type,
-            analysis_result=str(analysis.get("errors", [])),
-            clamav_result=clam_msg,
-        )
-
-        _init_db()
-        with app.app_context():
-            db.session.add(video)
-            db.session.commit()
-
-        return jsonify({
-            "message": "Video subido y analizado correctamente",
-            "video": video.to_dict(),
-            "analysis": {
-                "container": analysis.get("container"),
-                "streams": analysis.get("streams", []),
-            },
-            "clamav": clam_msg,
-        }), 201
-
-    except VideoAnalysisError as e:
-        return jsonify({"error": f"Error de análisis: {str(e)}"}), 400
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
-    finally:
-        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
 
 
