@@ -2,11 +2,10 @@ import os
 import uuid
 import mimetypes
 from datetime import datetime, timezone
-from flask import Flask, request, render_template, jsonify, send_file, redirect
+from flask import Flask, request, render_template, jsonify, send_file
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.utils import secure_filename
 from video_analyzer import analyze_video, VideoAnalysisError
-import storage as cloud_storage
 
 app = Flask(__name__)
 
@@ -20,7 +19,7 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 }
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
 
-base_dir = os.environ.get("UPLOAD_DIR", app.instance_path)
+base_dir = os.environ.get("UPLOAD_DIR", "/data" if os.environ.get("RENDER") else app.instance_path)
 app.config["UPLOAD_FOLDER"] = os.path.join(base_dir, "uploads")
 app.config["TEMP_FOLDER"] = os.path.join(base_dir, "temp")
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
@@ -41,7 +40,7 @@ db = SQLAlchemy(app)
 
 class Video(db.Model):
     id = db.Column(db.String(36), primary_key=True)
-    storage_path = db.Column(db.String(255), nullable=False)
+    filename = db.Column(db.String(255), nullable=False)
     original_name = db.Column(db.String(255), nullable=False)
     size = db.Column(db.Integer, nullable=False)
     container = db.Column(db.String(20))
@@ -180,20 +179,17 @@ def upload():
             }), 400
 
         video_id = str(uuid.uuid4())
-        storage_path = f"{video_id}{ext}"
+        filename = f"{video_id}{ext}"
+        final_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
 
-        if cloud_storage.is_available():
-            cloud_storage.upload_tus(temp_path, storage_path)
-        else:
-            dst = os.path.join(app.config["UPLOAD_FOLDER"], storage_path)
-            import shutil
-            shutil.move(temp_path, dst)
+        import shutil
+        shutil.move(temp_path, final_path)
 
         video = Video(
             id=video_id,
-            storage_path=storage_path,
+            filename=filename,
             original_name=safe_name,
-            size=os.path.getsize(temp_path),
+            size=os.path.getsize(final_path),
             container=analysis.get("container", ext.lstrip(".")),
             mime_type=mime_type,
             analysis_result=str(analysis.get("errors", [])),
@@ -228,12 +224,7 @@ def download(video_id):
     if not video:
         return jsonify({"error": "Video no encontrado"}), 404
 
-    if cloud_storage.is_available():
-        signed_url = cloud_storage.get_signed_url(video.storage_path)
-        if signed_url:
-            return redirect(signed_url)
-
-    filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.storage_path)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.filename)
     if not os.path.exists(filepath):
         return jsonify({"error": "Archivo no encontrado en el servidor"}), 404
 
@@ -251,12 +242,9 @@ def delete(video_id):
     if not video:
         return jsonify({"error": "Video no encontrado"}), 404
 
-    if cloud_storage.is_available():
-        cloud_storage.delete_file(video.storage_path)
-    else:
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.storage_path)
-        if os.path.exists(filepath):
-            os.remove(filepath)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.filename)
+    if os.path.exists(filepath):
+        os.remove(filepath)
 
     db.session.delete(video)
     db.session.commit()

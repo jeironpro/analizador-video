@@ -11,15 +11,11 @@ services:
         sync: false
       - key: SUPABASE_KEY
         sync: false
-      - key: SUPABASE_ANON_KEY
-        sync: false
-      - key: SUPABASE_STORAGE_BUCKET
-        value: videos
       - key: SECRET_KEY
         generateValue: true
       - key: RENDER
         value: "true"
     disk:
       name: uploads
-      mountPath: /data/uploads
+      mountPath: /data
       sizeGB: 5
