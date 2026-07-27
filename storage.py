@@ -1,5 +1,4 @@
 import os
-import io
 from supabase import create_client
 
 
@@ -34,7 +33,7 @@ def upload_file(filepath: str, storage_path: str) -> str:
     bucket = _get_bucket()
     with open(filepath, "rb") as f:
         data = f.read()
-    bucket.upload(storage_path, io.BytesIO(data))
+    bucket.upload(storage_path, data)
     return storage_path
 
 
