@@ -1,5 +1,7 @@
 import os
 from supabase import create_client
+from supabase.lib.client_options import SyncClientOptions, SyncHttpxClient
+from httpx import Timeout
 
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
@@ -14,7 +16,13 @@ _supabase = None
 def _get_client():
     global _supabase
     if _supabase is None and SUPABASE_URL and SUPABASE_KEY:
-        _supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        http_client = SyncHttpxClient(
+            http1=True,
+            http2=False,
+            timeout=Timeout(300.0, connect=30.0),
+        )
+        options = SyncClientOptions(httpx_client=http_client)
+        _supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=options)
     return _supabase
 
 

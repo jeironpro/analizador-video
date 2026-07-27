@@ -10,12 +10,14 @@ import storage as cloud_storage
 
 app = Flask(__name__)
 
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-    "DATABASE_URL", "sqlite:///videos.db"
-)
+database_url = os.environ.get("DATABASE_URL", "sqlite:///videos.db")
+if database_url.startswith("postgres") and "sslmode" not in database_url:
+    database_url += "?sslmode=require" if "?" not in database_url else "&sslmode=require"
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
+    "connect_args": {"connect_timeout": 10},
 }
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
 
@@ -60,8 +62,21 @@ class Video(db.Model):
         }
 
 
-with app.app_context():
-    db.create_all()
+_db_initialized = False
+
+def _init_db():
+    global _db_initialized
+    if _db_initialized:
+        return
+    try:
+        with app.app_context():
+            db.create_all()
+        _db_initialized = True
+    except Exception as e:
+        app.logger.warning("No se pudo conectar a la base de datos: %s", e)
+
+
+_init_db()
 
 
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
