@@ -131,9 +131,9 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
 def validate_file_size(filepath: str) -> tuple[bool, str]:
     size = os.path.getsize(filepath)
     if size < 50 * 1024 * 1024:
-        return False, f"El archivo es demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 100 MB"
-    if size > 160 * 1024 * 1024:
-        return False, f"El archivo es demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 160 MB"
+        return False, f"El archivo es demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 50 MB"
+    if size > 200 * 1024 * 1024:
+        return False, f"El archivo es demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 200 MB"
     return True, "OK"
 
 
