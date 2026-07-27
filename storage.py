@@ -29,11 +29,23 @@ def _get_bucket():
     return client.storage.from_(SUPABASE_STORAGE_BUCKET)
 
 
+MIME_MAP = {
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+    ".mov": "video/quicktime",
+    ".mpeg": "video/mpeg",
+    ".wmv": "video/x-ms-wmv",
+}
+
+
 def upload_file(filepath: str, storage_path: str) -> str:
     bucket = _get_bucket()
+    ext = os.path.splitext(storage_path)[1].lower()
+    content_type = MIME_MAP.get(ext, "application/octet-stream")
     with open(filepath, "rb") as f:
-        data = f.read()
-    bucket.upload(storage_path, data)
+        bucket.upload(storage_path, f, file_options={"content-type": content_type})
     return storage_path
 
 
