@@ -71,6 +71,7 @@
         </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
     <script>
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
@@ -108,26 +109,22 @@
                     const err = await urlResp.json();
                     throw new Error(err.error || 'Error al obtener URL de subida');
                 }
-                const { signed_url, token, storage_path, video_id } = await urlResp.json();
+                const { signed_url, storage_path, video_id } = await urlResp.json();
 
-                showStatus('info', 'Subiendo video a Supabase...');
+                showStatus('info', 'Subiendo video a Supabase (TUS)...');
                 await new Promise((resolve, reject) => {
-                    const formData = new FormData();
-                    formData.append('file', file, file.name);
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('PUT', signed_url, true);
-                    xhr.upload.onprogress = e => {
-                        if (e.lengthComputable) progressFill.style.width = (e.loaded / e.total * 100) + '%';
-                    };
-                    xhr.onload = () => {
-                        if (xhr.status >= 200 && xhr.status < 300) resolve();
-                        else reject(new Error(
-                            'Error en subida a Supabase (HTTP ' + xhr.status + '): ' +
-                            (xhr.responseText || 'sin respuesta')
-                        ));
-                    };
-                    xhr.onerror = () => reject(new Error('Error de conexión al subir'));
-                    xhr.send(formData);
+                    const upload = new tus.Upload(file, {
+                        endpoint: signed_url,
+                        chunkSize: 10 * 1024 * 1024,
+                        retryDelays: null,
+                        parallelUploads: 1,
+                        onProgress: (bytesSent, bytesTotal) => {
+                            progressFill.style.width = (bytesSent / bytesTotal * 100) + '%';
+                        },
+                        onSuccess: () => resolve(),
+                        onError: (err) => reject(new Error('Error TUS: ' + (err.message || err))),
+                    });
+                    upload.start();
                 });
 
                 showStatus('info', 'Analizando video...');
