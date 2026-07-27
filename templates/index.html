@@ -84,7 +84,7 @@
         uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
         fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
 
-        function handleFile(file) {
+        async function handleFile(file) {
             uploadStatus.className = 'status';
             uploadStatus.style.display = 'none';
 
@@ -94,24 +94,43 @@
                 return;
             }
 
-            const formData = new FormData();
-            formData.append('video', file);
-
             progressBar.style.display = 'block';
             progressFill.style.width = '0%';
 
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/api/upload', true);
+            try {
+                showStatus('info', 'Solicitando URL de subida...');
+                const urlResp = await fetch('/api/upload-url', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: file.name }),
+                });
+                if (!urlResp.ok) {
+                    const err = await urlResp.json();
+                    throw new Error(err.error || 'Error al obtener URL de subida');
+                }
+                const { signed_url, token, storage_path, video_id } = await urlResp.json();
 
-            xhr.upload.onprogress = e => {
-                if (e.lengthComputable) progressFill.style.width = (e.loaded / e.total * 100) + '%';
-            };
+                showStatus('info', 'Subiendo video a Supabase...');
+                await new Promise((resolve, reject) => {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('PUT', signed_url, true);
+                    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+                    xhr.upload.onprogress = e => {
+                        if (e.lengthComputable) progressFill.style.width = (e.loaded / e.total * 100) + '%';
+                    };
+                    xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error('Error en subida a Supabase'));
+                    xhr.onerror = () => reject(new Error('Error de conexión al subir'));
+                    xhr.send(file);
+                });
 
-            xhr.onload = () => {
-                progressBar.style.display = 'none';
-                progressFill.style.width = '0%';
-                const data = JSON.parse(xhr.responseText);
-                if (xhr.status === 201) {
+                showStatus('info', 'Analizando video...');
+                const confirmResp = await fetch('/api/confirm-upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ storage_path, original_name: file.name, video_id }),
+                });
+                const data = await confirmResp.json();
+                if (confirmResp.ok) {
                     showStatus('success', 'Video subido y analizado correctamente');
                     loadVideos();
                 } else {
@@ -119,14 +138,12 @@
                     const details = data.details ? '<br>' + data.details.join('<br>') : '';
                     showStatus('error', msg + details);
                 }
-            };
-
-            xhr.onerror = () => {
+            } catch (e) {
+                showStatus('error', e.message || 'Error interno');
+            } finally {
                 progressBar.style.display = 'none';
-                showStatus('error', 'Error de conexión');
-            };
-
-            xhr.send(formData);
+                progressFill.style.width = '0%';
+            }
         }
 
         function showStatus(type, message) {

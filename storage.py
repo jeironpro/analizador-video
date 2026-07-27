@@ -138,3 +138,24 @@ def get_signed_url(storage_path: str) -> str:
 def get_public_url(storage_path: str) -> str:
     bucket = _get_bucket()
     return bucket.get_public_url(storage_path)
+
+
+def create_signed_upload_url(storage_path: str) -> dict:
+    bucket = _get_bucket()
+    result = bucket.create_signed_upload_url(storage_path)
+    return result
+
+
+def upload_via_signed_url(signed_url: str, token: str, storage_path: str, filepath: str) -> str:
+    bucket = _get_bucket()
+    with open(filepath, "rb") as f:
+        bucket.upload_to_signed_url(storage_path, token, f)
+    return storage_path
+
+
+def download_to_temp(storage_path: str, temp_dir: str) -> str:
+    data = download_file(storage_path)
+    temp_path = os.path.join(temp_dir, storage_path.replace("/", "_"))
+    with open(temp_path, "wb") as f:
+        f.write(data)
+    return temp_path
