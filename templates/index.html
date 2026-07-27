@@ -112,15 +112,22 @@
 
                 showStatus('info', 'Subiendo video a Supabase...');
                 await new Promise((resolve, reject) => {
+                    const formData = new FormData();
+                    formData.append('file', file, file.name);
                     const xhr = new XMLHttpRequest();
                     xhr.open('PUT', signed_url, true);
-                    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
                     xhr.upload.onprogress = e => {
                         if (e.lengthComputable) progressFill.style.width = (e.loaded / e.total * 100) + '%';
                     };
-                    xhr.onload = () => xhr.status === 200 ? resolve() : reject(new Error('Error en subida a Supabase'));
+                    xhr.onload = () => {
+                        if (xhr.status >= 200 && xhr.status < 300) resolve();
+                        else reject(new Error(
+                            'Error en subida a Supabase (HTTP ' + xhr.status + '): ' +
+                            (xhr.responseText || 'sin respuesta')
+                        ));
+                    };
                     xhr.onerror = () => reject(new Error('Error de conexión al subir'));
-                    xhr.send(file);
+                    xhr.send(formData);
                 });
 
                 showStatus('info', 'Analizando video...');
