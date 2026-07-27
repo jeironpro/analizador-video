@@ -19,14 +19,21 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
 }
 app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
 
-base_dir = os.environ.get("UPLOAD_DIR", "/data" if os.environ.get("RENDER") else app.instance_path)
+base_dir = os.environ.get("UPLOAD_DIR", app.instance_path)
 app.config["UPLOAD_FOLDER"] = os.path.join(base_dir, "uploads")
 app.config["TEMP_FOLDER"] = os.path.join(base_dir, "temp")
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 app.config["DEBUG"] = os.environ.get("RENDER") != "true"
 
-os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-os.makedirs(app.config["TEMP_FOLDER"], exist_ok=True)
+try:
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["TEMP_FOLDER"], exist_ok=True)
+except PermissionError:
+    base_dir = app.instance_path
+    app.config["UPLOAD_FOLDER"] = os.path.join(base_dir, "uploads")
+    app.config["TEMP_FOLDER"] = os.path.join(base_dir, "temp")
+    os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["TEMP_FOLDER"], exist_ok=True)
 
 db = SQLAlchemy(app)
 
