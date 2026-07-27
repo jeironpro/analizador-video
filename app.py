@@ -18,7 +18,7 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
 }
-app.config["MAX_CONTENT_LENGTH"] = 160 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
 
 base_dir = os.environ.get("UPLOAD_DIR", "/data" if os.environ.get("RENDER") else app.instance_path)
 app.config["UPLOAD_FOLDER"] = os.path.join(base_dir, "uploads")
