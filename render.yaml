@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: analizador-video
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 120 --workers 2
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: videos
+      - key: SECRET_KEY
+        generateValue: true
+      - key: RENDER
+        value: "true"
+    disk:
+      name: uploads
+      mountPath: /data/uploads
+      sizeGB: 5

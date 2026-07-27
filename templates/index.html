@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analizador de Video</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #1a1a2e; line-height: 1.6; }
+        .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+        h1 { text-align: center; margin-bottom: 30px; color: #16213e; font-size: 1.8rem; }
+        .card { background: #fff; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+        h2 { font-size: 1.2rem; margin-bottom: 16px; color: #0f3460; }
+        .upload-zone { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 40px; text-align: center; cursor: pointer; transition: all .2s; }
+        .upload-zone:hover, .upload-zone.dragover { border-color: #0f3460; background: #f0f4ff; }
+        .upload-zone input[type="file"] { display: none; }
+        .upload-zone p { color: #64748b; }
+        .upload-zone .icon { font-size: 2rem; margin-bottom: 8px; }
+        .btn { display: inline-block; padding: 10px 24px; border: none; border-radius: 8px; font-size: .9rem; cursor: pointer; transition: all .2s; font-weight: 500; text-decoration: none; }
+        .btn-primary { background: #0f3460; color: #fff; }
+        .btn-primary:hover { background: #16213e; }
+        .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+        .btn-danger { background: #dc2626; color: #fff; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-success { background: #059669; color: #fff; }
+        .btn-success:hover { background: #047857; }
+        .status { margin-top: 16px; padding: 12px 16px; border-radius: 8px; display: none; }
+        .status.success { display: block; background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; }
+        .status.error { display: block; background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        .status.info { display: block; background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #e2e8f0; }
+        th { color: #64748b; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: 1px; }
+        td { font-size: .9rem; }
+        .actions { display: flex; gap: 8px; }
+        .actions .btn { padding: 6px 14px; font-size: .8rem; }
+        .empty { text-align: center; color: #94a3b8; padding: 32px; }
+        .progress-bar { width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 12px; overflow: hidden; display: none; }
+        .progress-bar .fill { height: 100%; background: #0f3460; border-radius: 3px; transition: width .3s; width: 0; }
+        .meta { font-size: .8rem; color: #64748b; margin-top: 4px; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .75rem; font-weight: 500; }
+        .tag-ok { background: #d1fae5; color: #065f46; }
+        .tag-err { background: #fee2e2; color: #991b1b; }
+        .size-bar { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .75rem; background: #f1f5f9; color: #475569; font-weight: 500; }
+        @media (max-width: 640px) {
+            .container { padding: 12px; }
+            th, td { padding: 8px 4px; font-size: .8rem; }
+            .actions { flex-direction: column; gap: 4px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Analizador de Video</h1>
+
+        <div class="card">
+            <h2>Subir Video</h2>
+            <div class="upload-zone" id="uploadZone">
+                <div class="icon">&#128249;</div>
+                <p><strong>Haz clic o arrastra un archivo aquí</strong></p>
+                <p class="meta">Video de 100 MB a 160 MB — Formatos: MP4, WebM, MKV, AVI, MOV</p>
+                <input type="file" id="fileInput" accept=".mp4,.webm,.mkv,.avi,.mov,.mpeg,.wmv">
+            </div>
+            <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
+            <div class="status" id="uploadStatus"></div>
+        </div>
+
+        <div class="card">
+            <h2>Videos Almacenados</h2>
+            <div id="videoList"><p class="empty">No hay videos almacenados</p></div>
+        </div>
+    </div>
+
+    <script>
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+
+        uploadZone.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+        uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+        uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
+        fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+
+        function handleFile(file) {
+            uploadStatus.className = 'status';
+            uploadStatus.style.display = 'none';
+
+            const sizeMB = file.size / 1024 / 1024;
+            if (sizeMB < 100 || sizeMB > 160) {
+                showStatus('error', `El archivo debe pesar entre 100 MB y 160 MB (${sizeMB.toFixed(1)} MB recibidos)`);
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('video', file);
+
+            progressBar.style.display = 'block';
+            progressFill.style.width = '0%';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload', true);
+
+            xhr.upload.onprogress = e => {
+                if (e.lengthComputable) progressFill.style.width = (e.loaded / e.total * 100) + '%';
+            };
+
+            xhr.onload = () => {
+                progressBar.style.display = 'none';
+                progressFill.style.width = '0%';
+                const data = JSON.parse(xhr.responseText);
+                if (xhr.status === 201) {
+                    showStatus('success', 'Video subido y analizado correctamente');
+                    loadVideos();
+                } else {
+                    const msg = data.error || 'Error desconocido';
+                    const details = data.details ? '<br>' + data.details.join('<br>') : '';
+                    showStatus('error', msg + details);
+                }
+            };
+
+            xhr.onerror = () => {
+                progressBar.style.display = 'none';
+                showStatus('error', 'Error de conexión');
+            };
+
+            xhr.send(formData);
+        }
+
+        function showStatus(type, message) {
+            uploadStatus.className = 'status ' + type;
+            uploadStatus.innerHTML = message;
+            uploadStatus.style.display = 'block';
+        }
+
+        function loadVideos() {
+            fetch('/api/videos')
+                .then(r => r.json())
+                .then(videos => {
+                    const container = document.getElementById('videoList');
+                    if (videos.length === 0) {
+                        container.innerHTML = '<p class="empty">No hay videos almacenados</p>';
+                        return;
+                    }
+                    let html = `
+                        <table>
+                            <thead><tr>
+                                <th>Nombre</th>
+                                <th>Tamaño</th>
+                                <th>Formato</th>
+                                <th>Subido</th>
+                                <th>Acciones</th>
+                            </tr></thead>
+                            <tbody>
+                    `;
+                    videos.forEach(v => {
+                        const size = (v.size / 1024 / 1024).toFixed(1);
+                        const date = new Date(v.uploaded_at).toLocaleString('es-ES');
+                        html += `
+                            <tr>
+                                <td><strong>${escapeHtml(v.original_name)}</strong></td>
+                                <td><span class="size-bar">${size} MB</span></td>
+                                <td><span class="tag tag-ok">${escapeHtml(v.container || '?')}</span></td>
+                                <td>${date}</td>
+                                <td class="actions">
+                                    <a href="/api/download/${v.id}" class="btn btn-success">Descargar</a>
+                                    <button class="btn btn-danger" onclick="deleteVideo('${v.id}')">Eliminar</button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    html += '</tbody></table>';
+                    container.innerHTML = html;
+                })
+                .catch(() => {});
+        }
+
+        function deleteVideo(id) {
+            if (!confirm('¿Eliminar este video definitivamente?')) return;
+            fetch('/api/delete/' + id, { method: 'DELETE' })
+                .then(r => {
+                    if (r.ok) {
+                        loadVideos();
+                        showStatus('info', 'Video eliminado correctamente');
+                    } else {
+                        showStatus('error', 'Error al eliminar el video');
+                    }
+                })
+                .catch(() => showStatus('error', 'Error de conexión'));
+        }
+
+        function escapeHtml(text) {
+            const d = document.createElement('div');
+            d.textContent = text;
+            return d.innerHTML;
+        }
+
+        loadVideos();
+    </script>
+</body>
+</html>
