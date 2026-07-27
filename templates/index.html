@@ -71,13 +71,27 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>
         const uploadZone = document.getElementById('uploadZone');
         const fileInput = document.getElementById('fileInput');
         const uploadStatus = document.getElementById('uploadStatus');
         const progressBar = document.getElementById('progressBar');
         const progressFill = document.getElementById('progressFill');
+
+        let _supabase = null;
+
+        async function getSupabase() {
+            if (_supabase) return _supabase;
+            const resp = await fetch('/api/config');
+            const cfg = await resp.json();
+            if (!cfg.supabase_url || !cfg.supabase_anon_key) {
+                throw new Error('Supabase no está configurado');
+            }
+            _supabase = supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+            _supabase._bucket = cfg.supabase_storage_bucket;
+            return _supabase;
+        }
 
         uploadZone.addEventListener('click', () => fileInput.click());
         uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
@@ -98,48 +112,37 @@
             progressBar.style.display = 'block';
             progressFill.style.width = '0%';
 
-            try {
-                showStatus('info', 'Solicitando URL de subida...');
-                const urlResp = await fetch('/api/upload-url', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: file.name }),
-                });
-                if (!urlResp.ok) {
-                    const err = await urlResp.json();
-                    throw new Error(err.error || 'Error al obtener URL de subida');
-                }
-                const { signed_url, storage_path, video_id } = await urlResp.json();
+            const videoId = crypto.randomUUID();
+            const ext = file.name.substring(file.name.lastIndexOf('.'));
+            const storagePath = videoId + ext;
 
-                showStatus('info', 'Subiendo video a Supabase (TUS)...');
-                await new Promise((resolve, reject) => {
-                    const upload = new tus.Upload(file, {
-                        endpoint: signed_url,
-                        chunkSize: 10 * 1024 * 1024,
-                        retryDelays: null,
-                        parallelUploads: 1,
-                        onProgress: (bytesSent, bytesTotal) => {
-                            progressFill.style.width = (bytesSent / bytesTotal * 100) + '%';
-                        },
-                        onSuccess: () => resolve(),
-                        onError: (err) => reject(new Error('Error TUS: ' + (err.message || err))),
+            try {
+                const sb = await getSupabase();
+
+                showStatus('info', 'Subiendo video a Supabase...');
+                const { data, error } = await sb.storage
+                    .from(sb._bucket)
+                    .upload(storagePath, file, {
+                        upsert: true,
+                        cacheControl: '3600',
+                        contentType: file.type || 'application/octet-stream',
                     });
-                    upload.start();
-                });
+
+                if (error) throw new Error('Error al subir: ' + error.message);
 
                 showStatus('info', 'Analizando video...');
                 const confirmResp = await fetch('/api/confirm-upload', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ storage_path, original_name: file.name, video_id }),
+                    body: JSON.stringify({ storage_path: storagePath, original_name: file.name, video_id: videoId }),
                 });
-                const data = await confirmResp.json();
+                const data2 = await confirmResp.json();
                 if (confirmResp.ok) {
                     showStatus('success', 'Video subido y analizado correctamente');
                     loadVideos();
                 } else {
-                    const msg = data.error || 'Error desconocido';
-                    const details = data.details ? '<br>' + data.details.join('<br>') : '';
+                    const msg = data2.error || 'Error desconocido';
+                    const details = data2.details ? '<br>' + data2.details.join('<br>') : '';
                     showStatus('error', msg + details);
                 }
             } catch (e) {

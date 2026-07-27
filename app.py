@@ -131,6 +131,15 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/config", methods=["GET"])
+def config():
+    return jsonify({
+        "supabase_url": os.environ.get("SUPABASE_URL", ""),
+        "supabase_anon_key": os.environ.get("SUPABASE_ANON_KEY", ""),
+        "supabase_storage_bucket": os.environ.get("SUPABASE_STORAGE_BUCKET", "videos"),
+    })
+
+
 @app.route("/api/videos", methods=["GET"])
 def list_videos():
     videos = Video.query.order_by(Video.uploaded_at.desc()).all()
