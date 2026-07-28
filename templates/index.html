@@ -11,21 +11,21 @@
 </head>
 <body>
 
-<nav class="navbar navbar-dark border-bottom" style="border-color:rgba(79,140,255,0.12)!important;background:#0d1124">
+<nav class="navbar navbar-custom">
   <div class="container">
-    <span class="navbar-brand mb-0 d-flex align-items-center gap-2">
-      <i class="bi bi-camera-reels" style="color:#e94560;font-size:1.4rem"></i>
-      <span>Analizador de Video</span>
+    <span class="navbar-brand mb-0 d-flex align-items-center gap-2 fw-semibold text-dark">
+      <i class="bi bi-camera-reels" style="color:#e94560;font-size:1.3rem"></i>
+      Analizador de Video
     </span>
-    <span class="badge bg-primary bg-opacity-25 text-primary px-3 py-2" id="videoCount">0 videos</span>
+    <span class="badge bg-primary bg-opacity-10 text-primary px-3 py-2" id="videoCount">0 videos</span>
   </div>
 </nav>
 
 <div class="container py-4">
 
   <!-- Upload -->
-  <div class="card-glow p-0">
-    <div class="card-header-glow">
+  <div class="card-custom">
+    <div class="card-header-custom">
       <h5 class="mb-0 d-flex align-items-center gap-2">
         <i class="bi bi-cloud-arrow-up text-primary"></i> Subir Videos
       </h5>
@@ -33,7 +33,7 @@
     <div class="p-4">
       <div class="upload-zone" id="uploadZone">
         <i class="bi bi-cloud-arrow-up upload-icon"></i>
-        <h6 class="fw-semibold mb-1">Arrastra archivos aquí o haz clic para seleccionar</h6>
+        <h6 class="fw-semibold mb-1">Arrastra archivos o haz clic para seleccionar</h6>
         <p class="text-muted small mb-0">50 MB – 500 MB &middot; MP4, WebM, MKV, AVI, MOV, MPEG, WMV</p>
         <input type="file" id="fileInput" accept=".mp4,.webm,.mkv,.avi,.mov,.mpeg,.wmv" multiple>
       </div>
@@ -44,8 +44,8 @@
   </div>
 
   <!-- Queue -->
-  <div class="card-glow mt-4 d-none" id="queueCard">
-    <div class="card-header-glow d-flex justify-content-between align-items-center">
+  <div class="card-custom mt-4 d-none" id="queueCard">
+    <div class="card-header-custom d-flex justify-content-between align-items-center">
       <h5 class="mb-0 d-flex align-items-center gap-2">
         <i class="bi bi-list-task text-warning"></i> Cola de Procesamiento
       </h5>
@@ -55,16 +55,18 @@
   </div>
 
   <!-- Videos -->
-  <div class="card-glow mt-4">
-    <div class="card-header-glow">
+  <div class="card-custom mt-4">
+    <div class="card-header-custom">
       <h5 class="mb-0 d-flex align-items-center gap-2">
         <i class="bi bi-film text-success"></i> Videos Almacenados
       </h5>
     </div>
-    <div class="p-0" id="videoList">
-      <div class="empty-state">
-        <i class="bi bi-film"></i>
-        <p class="mb-0">No hay videos almacenados</p>
+    <div class="p-3">
+      <div class="video-grid" id="videoContainer">
+        <div class="empty-state">
+          <i class="bi bi-film"></i>
+          <p class="mb-0">No hay videos almacenados</p>
+        </div>
       </div>
     </div>
   </div>

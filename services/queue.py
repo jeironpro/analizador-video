@@ -199,7 +199,7 @@ class QueueManager:
     def _scheduler_loop(self):
         with self.app.app_context():
             while True:
-                item = None
+                temp_id = None
                 with self._lock:
                     processing = sum(
                         1 for qi in self._queue.values() if qi["status"] == "processing"
@@ -208,11 +208,11 @@ class QueueManager:
                         for qi in self._queue.values():
                             if qi["status"] == "queued":
                                 qi["status"] = "processing"
-                                item = qi
-                                self.update_status(qi["temp_id"], "processing")
+                                temp_id = qi["temp_id"]
                                 break
-                if item:
-                    self._executor.submit(self._process_item, item["temp_id"])
+                if temp_id:
+                    self.update_status(temp_id, "processing")
+                    self._executor.submit(self._process_item, temp_id)
                 time.sleep(1)
 
     def _process_item(self, temp_id):

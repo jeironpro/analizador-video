@@ -5,7 +5,7 @@
   const progressFill = document.getElementById('progressFill');
   const queueCard = document.getElementById('queueCard');
   const queueContainer = document.getElementById('queueContainer');
-  const videoListEl = document.getElementById('videoList');
+  const videoContainer = document.getElementById('videoContainer');
   const esMap = {};
 
   const STATUS_MAP = {
@@ -16,23 +16,30 @@
     error:      ['bg-danger',     'Error'],
   };
 
-  // ───────────────────────── Upload ─────────────────────────
+  function formatSize(bytes) {
+    const mb = bytes / 1024 / 1024;
+    if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
+    return mb.toFixed(1) + ' MB';
+  }
+  function formatDate(iso) {
+    return new Date(iso).toLocaleString('es-ES');
+  }
+  function escapeHtml(text) {
+    const d = document.createElement('div');
+    d.textContent = text;
+    return d.innerHTML;
+  }
+  function iconForExt(ext) {
+    const map = { mp4: 'file-play', webm: 'file-play', mkv: 'file-earmark', avi: 'file-earmark', mov: 'file-play', mpeg: 'file-play', wmv: 'file-earmark' };
+    return 'bi-' + (map[ext.replace('.','')] || 'file-earmark');
+  }
+
+  // ───────── Upload ─────────
   uploadZone.addEventListener('click', () => fileInput.click());
-  uploadZone.addEventListener('dragover', e => {
-    e.preventDefault();
-    uploadZone.classList.add('dragover');
-  });
-  uploadZone.addEventListener('dragleave', () => {
-    uploadZone.classList.remove('dragover');
-  });
-  uploadZone.addEventListener('drop', e => {
-    e.preventDefault();
-    uploadZone.classList.remove('dragover');
-    handleFiles(e.dataTransfer.files);
-  });
-  fileInput.addEventListener('change', () => {
-    if (fileInput.files.length) handleFiles(fileInput.files);
-  });
+  uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
+  uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
+  uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+  fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFiles(fileInput.files); });
 
   function handleFiles(files) {
     progressBar.classList.remove('d-none');
@@ -52,10 +59,6 @@
       };
       xhr.onload = () => {
         done++;
-        if (xhr.status === 201) {
-          const data = JSON.parse(xhr.responseText);
-          addQueueItem(data.temp_id, data.original_name);
-        }
         if (done === files.length) {
           progressBar.classList.add('d-none');
           progressFill.style.width = '0%';
@@ -67,37 +70,7 @@
     }
   }
 
-  // ───────────────────────── Queue items ─────────────────────────
-  function addQueueItem(tempId, name) {
-    queueCard.classList.remove('d-none');
-    const row = document.createElement('div');
-    row.id = 'q-' + tempId;
-    row.className = 'queue-item p-3 mb-2';
-    row.innerHTML = `
-      <div class="d-flex justify-content-between align-items-center gap-2">
-        <div class="d-flex align-items-center gap-2 text-truncate">
-          <i class="bi bi-file-play text-primary"></i>
-          <strong class="text-truncate">${escapeHtml(name)}</strong>
-        </div>
-        <div class="d-flex align-items-center gap-2 flex-shrink-0">
-          <span class="badge badge-status ${STATUS_MAP.uploaded[0]}" id="q-status-${tempId}">${STATUS_MAP.uploaded[1]}</span>
-          <div id="q-actions-${tempId}">
-            <button class="btn btn-primary btn-action" onclick="window._processItem('${tempId}')">Procesar</button>
-            <button class="btn btn-outline-danger btn-icon" onclick="window._removeQueueItem('${tempId}')" title="Eliminar">
-              <i class="bi bi-trash"></i>
-            </button>
-          </div>
-        </div>
-      </div>
-      <div id="q-terminal-${tempId}" class="terminal mt-2 d-none"></div>
-    `;
-    queueContainer.appendChild(row);
-    // re-trigger animation
-    row.style.animation = 'none';
-    row.offsetHeight;
-    row.style.animation = '';
-  }
-
+  // ───────── Queue ─────────
   window._processItem = function (tempId) {
     setQueueStatus(tempId, 'queued');
     const actions = document.getElementById('q-actions-' + tempId);
@@ -175,53 +148,88 @@
     const el = document.getElementById('q-status-' + tempId);
     if (!el) return;
     const [cls, label] = STATUS_MAP[status] || ['bg-info', status];
-    el.className = 'badge badge-status ' + cls;
+    el.className = 'badge ' + cls;
     el.textContent = label;
     const row = document.getElementById('q-' + tempId);
     if (row) row.classList.toggle('processing', status === 'processing');
   }
 
-  // ───────────────────────── Queue rendering ─────────────────────────
+  function makeQueueItem(item) {
+    const tempId = escapeHtml(item.temp_id);
+    const name = escapeHtml(item.original_name || 'video');
+    const status = item.status;
+    const statusCls = (STATUS_MAP[status] || ['bg-info'])[0];
+    const statusLabel = (STATUS_MAP[status] || [,''])[1];
+
+    let actionsHtml = '';
+    if (status === 'uploaded') {
+      actionsHtml = `
+        <button class="btn btn-sm btn-primary" onclick="window._processItem('${tempId}')"><i class="bi bi-play-fill"></i> Procesar</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="window._removeQueueItem('${tempId}')"><i class="bi bi-trash"></i> Eliminar</button>`;
+    } else if (status === 'queued' || status === 'processing') {
+      actionsHtml = '<span class="text-muted small">En cola...</span>';
+    }
+
+    return `
+      <div id="q-${tempId}" class="queue-item p-3 mb-2${status === 'processing' ? ' processing' : ''}">
+        <div class="d-flex justify-content-between align-items-center gap-2">
+          <div class="d-flex align-items-center gap-2 text-truncate">
+            <i class="bi bi-file-play text-primary flex-shrink-0"></i>
+            <span class="fw-medium text-truncate">${name}</span>
+          </div>
+          <div class="d-flex align-items-center gap-2 flex-shrink-0">
+            <span class="badge ${statusCls}" id="q-status-${tempId}">${statusLabel}</span>
+            <div id="q-actions-${tempId}">${actionsHtml}</div>
+          </div>
+        </div>
+        <div id="q-terminal-${tempId}" class="terminal mt-2 d-none"></div>
+      </div>`;
+  }
+
   function renderQueue(items) {
     const existingIds = new Set(items.map(i => i.temp_id));
-    let queueCount = 0;
+    let activeCount = 0;
+
+    // Render or update each item
     items.forEach(item => {
-      if (item.status !== 'done' && item.status !== 'error') queueCount++;
-      if (!document.getElementById('q-' + item.temp_id)) {
-        addQueueItem(item.temp_id, item.original_name || 'video');
-      }
-      setQueueStatus(item.temp_id, item.status);
-      if (item.status === 'processing' || item.status === 'queued') {
-        if (!esMap[item.temp_id]) startQueueStream(item.temp_id);
-      }
-      if (item.status === 'uploaded') {
-        const actions = document.getElementById('q-actions-' + item.temp_id);
-        if (actions) {
-          actions.innerHTML = `
-            <button class="btn btn-primary btn-action" onclick="window._processItem('${item.temp_id}')">Procesar</button>
-            <button class="btn btn-outline-danger btn-icon" onclick="window._removeQueueItem('${item.temp_id}')" title="Eliminar">
-              <i class="bi bi-trash"></i>
-            </button>
-          `;
+      if (item.status !== 'done' && item.status !== 'error') activeCount++;
+      const el = document.getElementById('q-' + item.temp_id);
+      if (el) {
+        // Update existing
+        setQueueStatus(item.temp_id, item.status);
+        if (item.status === 'uploaded') {
+          const actions = document.getElementById('q-actions-' + item.temp_id);
+          if (actions) {
+            actions.innerHTML = `
+              <button class="btn btn-sm btn-primary" onclick="window._processItem('${item.temp_id}')"><i class="bi bi-play-fill"></i> Procesar</button>
+              <button class="btn btn-sm btn-outline-danger" onclick="window._removeQueueItem('${item.temp_id}')"><i class="bi bi-trash"></i> Eliminar</button>`;
+          }
+        }
+        if (item.status === 'done' || item.status === 'error') {
+          const actions = document.getElementById('q-actions-' + item.temp_id);
+          if (actions) actions.innerHTML = '';
+        }
+        if (item.status === 'processing' || item.status === 'queued') {
+          if (!esMap[item.temp_id]) startQueueStream(item.temp_id);
+        }
+      } else {
+        // New item
+        queueContainer.insertAdjacentHTML('beforeend', makeQueueItem(item));
+        if (item.status === 'processing' || item.status === 'queued') {
+          startQueueStream(item.temp_id);
         }
       }
-      if (item.status === 'done' || item.status === 'error') {
-        const actions = document.getElementById('q-actions-' + item.temp_id);
-        if (actions) actions.innerHTML = '';
-      }
     });
+
+    // Remove stale items
     document.querySelectorAll('#queueContainer > .queue-item').forEach(el => {
       const id = el.id.replace(/^q-/, '');
       if (id && !existingIds.has(id)) el.remove();
     });
-    const countEl = document.getElementById('queueCount');
-    if (countEl) countEl.textContent = queueCount;
-    if (items.length === 0) {
-      queueCard.classList.add('d-none');
-      queueContainer.innerHTML = '';
-    } else {
-      queueCard.classList.remove('d-none');
-    }
+
+    document.getElementById('queueCount').textContent = activeCount;
+    queueCard.classList.toggle('d-none', items.length === 0);
+    if (items.length === 0) queueContainer.innerHTML = '';
   }
 
   function loadQueue() {
@@ -231,34 +239,43 @@
       .catch(() => {});
   }
 
-  // ───────────────────────── Videos ─────────────────────────
+  // ───────── Videos ─────────
+  function renderVideos(videos) {
+    document.getElementById('videoCount').textContent = videos.length + ' video' + (videos.length !== 1 ? 's' : '');
+    if (videos.length === 0) {
+      videoContainer.innerHTML = '<div class="empty-state"><i class="bi bi-film"></i><p class="mb-0">No hay videos almacenados</p></div>';
+      return;
+    }
+    let html = '';
+    videos.forEach(v => {
+      const ext = v.container || '?';
+      const icon = iconForExt(ext);
+      html += `
+        <div class="video-card p-3">
+          <div class="d-flex justify-content-between align-items-start mb-2">
+            <div class="text-truncate me-2">
+              <i class="bi ${icon} text-primary me-1"></i>
+              <span class="fw-semibold" style="font-size:.9rem">${escapeHtml(v.original_name)}</span>
+            </div>
+            <span class="badge bg-light text-dark border flex-shrink-0">${escapeHtml(ext.toUpperCase())}</span>
+          </div>
+          <div class="d-flex gap-2 mb-2">
+            <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${formatSize(v.size)}</span>
+          </div>
+          <p class="text-muted small mb-2">${formatDate(v.uploaded_at)}</p>
+          <div class="d-flex gap-2">
+            <a href="/api/download/${v.id}" class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i> Descargar</a>
+            <button class="btn btn-sm btn-outline-danger" onclick="window._deleteVideo('${v.id}')"><i class="bi bi-trash"></i> Eliminar</button>
+          </div>
+        </div>`;
+    });
+    videoContainer.innerHTML = html;
+  }
+
   function loadVideos() {
     fetch('/api/videos')
       .then(r => r.json())
-      .then(videos => {
-        document.getElementById('videoCount').textContent = videos.length + ' video' + (videos.length !== 1 ? 's' : '');
-        if (videos.length === 0) {
-          videoListEl.innerHTML = '<div class="empty-state"><i class="bi bi-film"></i><p class="mb-0">No hay videos almacenados</p></div>';
-          return;
-        }
-        let html = '<div class="table-responsive"><table class="table table-videos"><thead><tr><th>Nombre</th><th>Tamaño</th><th>Formato</th><th>Subido</th><th class="text-end">Acciones</th></tr></thead><tbody>';
-        videos.forEach(v => {
-          const size = (v.size / 1024 / 1024).toFixed(1);
-          const date = new Date(v.uploaded_at).toLocaleString('es-ES');
-          html += `<tr>
-            <td><strong>${escapeHtml(v.original_name)}</strong></td>
-            <td><span class="badge bg-info bg-opacity-10 text-info">${size} MB</span></td>
-            <td><span class="badge bg-success bg-opacity-10 text-success">${escapeHtml(v.container || '?')}</span></td>
-            <td class="text-muted small">${date}</td>
-            <td class="text-end">
-              <a href="/api/download/${v.id}" class="btn btn-success btn-action me-1"><i class="bi bi-download me-1"></i>Descargar</a>
-              <button class="btn btn-outline-danger btn-icon" onclick="window._deleteVideo('${v.id}')" title="Eliminar"><i class="bi bi-trash"></i></button>
-            </td>
-          </tr>`;
-        });
-        html += '</tbody></table></div>';
-        videoListEl.innerHTML = html;
-      })
+      .then(videos => renderVideos(videos))
       .catch(() => {});
   }
 
@@ -269,20 +286,7 @@
       .catch(() => {});
   };
 
-  function escapeHtml(text) {
-    const d = document.createElement('div');
-    d.textContent = text;
-    return d.innerHTML;
-  }
-
-  // ───────────────────────── Bootstrap Tooltips ─────────────────────────
-  document.addEventListener('DOMContentLoaded', () => {
-    if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) {
-      document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => new bootstrap.Tooltip(el));
-    }
-  });
-
-  // ───────────────────────── Init ─────────────────────────
+  // ───────── Init ─────────
   loadQueue();
   loadVideos();
 
@@ -293,10 +297,7 @@
     queueES.onmessage = e => {
       try { renderQueue(JSON.parse(e.data)); } catch (_) {}
     };
-    queueES.onerror = () => {
-      queueES.close();
-      queueES = null;
-    };
+    queueES.onerror = () => { queueES.close(); queueES = null; };
   }
   connectQueueSSE();
   setInterval(() => { if (!queueES) loadQueue(); }, 15000);
