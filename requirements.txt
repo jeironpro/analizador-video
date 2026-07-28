@@ -1,7 +1,5 @@
 flask
 flask-sqlalchemy
 psycopg2-binary
-pyclamd
 python-magic
-
 gunicorn

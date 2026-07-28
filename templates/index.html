@@ -91,7 +91,7 @@
         function handleFile(file) {
             const sizeMB = file.size / 1024 / 1024;
             if (sizeMB < 50 || sizeMB > 500) {
-                appendTerminal('error', `El archivo debe pesar entre 50 MB y 200 MB (${sizeMB.toFixed(1)} MB recibidos)`);
+                appendTerminal('error', `El archivo debe pesar entre 50 MB y 500 MB (${sizeMB.toFixed(1)} MB recibidos)`);
                 return;
             }
 

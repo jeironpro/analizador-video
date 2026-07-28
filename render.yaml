@@ -2,7 +2,7 @@ services:
   - type: web
     name: analizador-video
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: apt-get update && apt-get install -y clamav && pip install -r requirements.txt
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class sync
     envVars:
       - key: DATABASE_URL
