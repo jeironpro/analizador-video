@@ -186,7 +186,7 @@ def queue_stream(temp_id):
             if item["status"] == "done":
                 yield _sse_complete({"video": item["result"]})
                 return
-            if item["status"] == "error":
+            if item["status"] in ("error", "cancelled"):
                 yield _sse_error(item["error"] or "Error desconocido")
                 return
             time.sleep(0.5)
@@ -207,6 +207,17 @@ def queue_remove(temp_id):
         return jsonify({"error": f"No se puede eliminar un item en estado: {item['status']}"}), 400
     queue.remove(temp_id)
     return jsonify({"message": "Item eliminado de la cola"}), 200
+
+
+@app.route("/api/queue/<temp_id>/cancel", methods=["POST"])
+def queue_cancel(temp_id):
+    item = queue.get(temp_id)
+    if not item:
+        return jsonify({"error": "Item no encontrado"}), 404
+    if item["status"] != "processing":
+        return jsonify({"error": "Solo se puede cancelar un item en procesamiento"}), 400
+    queue.cancel(temp_id)
+    return jsonify({"message": "Procesamiento cancelado"}), 200
 
 
 @app.route("/api/download/<video_id>", methods=["GET"])

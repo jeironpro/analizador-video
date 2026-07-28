@@ -93,6 +93,22 @@ class QueueManager:
             os.remove(item["temp_path"])
         self._delete_from_db(temp_id)
 
+    def cancel(self, temp_id):
+        entry = {"step": "cancel", "status": "error", "message": "Procesamiento cancelado por el usuario"}
+        with self._lock:
+            item = self._queue.get(temp_id)
+            if item and item["status"] == "processing":
+                item["status"] = "cancelled"
+                item["error"] = "Cancelado por el usuario"
+                item["logs"].append(entry)
+        self._persist_status(temp_id, "cancelled", error="Cancelado por el usuario")
+        self._persist_log(temp_id, entry)
+
+    def _is_cancelled(self, temp_id):
+        with self._lock:
+            item = self._queue.get(temp_id)
+            return item is None or item["status"] != "processing"
+
     # ------------------------------------------------------------------
     # DB persistence helpers
     # ------------------------------------------------------------------
@@ -243,6 +259,7 @@ class QueueManager:
                     tp = item["temp_path"]
 
                     self.log(temp_id, "size", "checking", "Validando tamaño...")
+                    if self._is_cancelled(temp_id): return
                     ok, msg = validate_file_size(tp)
                     if not ok:
                         self.log(temp_id, "size", "error", msg)
@@ -251,6 +268,7 @@ class QueueManager:
                     self.log(temp_id, "size", "ok", msg)
 
                     self.log(temp_id, "mime", "checking", "Detectando tipo MIME...")
+                    if self._is_cancelled(temp_id): return
                     ok, mime_or_msg = validate_mime_type(tp)
                     if not ok:
                         self.log(temp_id, "mime", "error", mime_or_msg)
@@ -259,6 +277,7 @@ class QueueManager:
                     self.log(temp_id, "mime", "ok", mime_or_msg)
 
                     self.log(temp_id, "clamav", "checking", "Escaneando con ClamAV...")
+                    if self._is_cancelled(temp_id): return
                     ok, clam_msg = scan_with_clamav(tp)
                     if not ok:
                         self.log(temp_id, "clamav", "error", clam_msg)
@@ -267,6 +286,7 @@ class QueueManager:
                     self.log(temp_id, "clamav", "ok", clam_msg)
 
                     self.log(temp_id, "analysis", "checking", "Analizando codecs y metadatos...")
+                    if self._is_cancelled(temp_id): return
                     analysis = analyze_video(tp)
                     if not analysis.get("valid", False):
                         for err in analysis.get("errors", []):

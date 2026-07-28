@@ -101,7 +101,26 @@
     const es = new EventSource('/api/queue/' + tempId + '/stream');
     esMap[tempId] = es;
 
+    let stopBtn = null;
+    const removeStopBtn = () => { if (stopBtn) { stopBtn.remove(); stopBtn = null; } };
+    const addStopBtn = () => {
+      if (stopBtn) return;
+      const term = document.getElementById('q-terminal-' + tempId);
+      if (!term) return;
+      stopBtn = document.createElement('button');
+      stopBtn.id = 'q-stop-' + tempId;
+      stopBtn.className = 'btn btn-outline-danger btn-sm w-100 mt-2 rounded-3';
+      stopBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Detener';
+      stopBtn.onclick = () => {
+        stopBtn.disabled = true;
+        stopBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Deteniendo...';
+        fetch('/api/queue/' + tempId + '/cancel', { method: 'POST' }).catch(() => {});
+      };
+      term.parentNode.insertBefore(stopBtn, term.nextSibling);
+    };
+
     es.addEventListener('step', e => {
+      addStopBtn();
       const d = JSON.parse(e.data);
       appendTerminal(tempId, d.status, d.message);
       const row = document.getElementById('q-' + tempId);
@@ -110,6 +129,7 @@
     });
 
     es.addEventListener('complete', () => {
+      removeStopBtn();
       es.close();
       delete esMap[tempId];
       appendTerminal(tempId, 'complete', '\u2713 Completado');
@@ -119,6 +139,7 @@
     });
 
     es.addEventListener('error', e => {
+      removeStopBtn();
       es.close();
       delete esMap[tempId];
       let msg = 'Error';
