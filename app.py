@@ -129,21 +129,23 @@ def _sse_error(message: str):
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
     try:
         result = subprocess.run(
-            ["clamscan", "--stdout", "--no-summary", "--quiet", filepath],
-            capture_output=True, text=True, timeout=120,
+            ["clamscan", "--stdout", "--no-summary", "--quiet",
+             "--max-files=1000", "--max-filesize=200M", "--max-scansize=200M",
+             "--database=/var/lib/clamav", filepath],
+            capture_output=True, text=True, timeout=300,
         )
         if result.returncode == 0:
             return True, "Archivo limpio"
         if result.returncode == 1:
             return False, f"Virus detectado: {result.stdout.strip()}"
-        err = result.stderr.strip()
-        return True, f"ClamAV: error ({result.returncode}){': ' + err if err else ''}"
+        err = result.stderr.strip()[:200]
+        return True, f"ClamAV: error ({result.returncode})"
     except FileNotFoundError:
         return True, "ClamAV no está instalado en el servidor"
     except subprocess.TimeoutExpired:
         return True, "Escaneo excedió el tiempo límite"
     except Exception as e:
-        return True, f"Escaneo no disponible: {str(e)}"
+        return True, "Escaneo no disponible"
 
 
 def validate_file_size(filepath: str) -> tuple[bool, str]:
