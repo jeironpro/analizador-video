@@ -83,7 +83,7 @@ def analyze_video(filepath: str) -> dict:
             fps = float(num) / float(den) if float(den) != 0 else 0
         except (ValueError, ZeroDivisionError):
             fps = 0
-        if fps > 1000:
+        if fps <= 0 or fps > 1000:
             avg_frame_rate = vs.get("avg_frame_rate", "0/1")
             try:
                 num, den = avg_frame_rate.split("/")
@@ -97,10 +97,11 @@ def analyze_video(filepath: str) -> dict:
             errors.append(f"Resolución de video no válida: {width}x{height}")
         if width < MIN_RESOLUTION[0] or height < MIN_RESOLUTION[1]:
             errors.append(f"Resolución de video demasiado pequeña: {width}x{height}")
-        if fps > MAX_FRAME_RATE:
-            errors.append(f"FPS de video no válido: {fps}")
-        if fps < MIN_FRAME_RATE:
-            errors.append(f"FPS de video demasiado bajo: {fps}")
+        if fps > 0:
+            if fps > MAX_FRAME_RATE:
+                errors.append(f"FPS de video no válido: {fps}")
+            if fps < MIN_FRAME_RATE:
+                errors.append(f"FPS de video demasiado bajo: {fps}")
 
         stream_details.append({
             "type": "video",
