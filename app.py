@@ -137,6 +137,22 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
             return True, "Archivo limpio"
         if result.returncode == 1:
             return False, f"Virus detectado: {result.stdout.strip()}"
+    except FileNotFoundError:
+        pass
+    except subprocess.TimeoutExpired:
+        pass
+    except Exception:
+        pass
+    try:
+        result = subprocess.run(
+            ["clamscan", "--stdout", "--no-summary", "--quiet",
+             "--database=/var/lib/clamav", filepath],
+            capture_output=True, text=True, timeout=300,
+        )
+        if result.returncode == 0:
+            return True, "Archivo limpio"
+        if result.returncode == 1:
+            return False, f"Virus detectado: {result.stdout.strip()}"
         return True, f"ClamAV: error ({result.returncode})"
     except FileNotFoundError:
         return True, "ClamAV no está instalado en el servidor"
