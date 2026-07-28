@@ -24,14 +24,24 @@
         .btn-danger:hover { background: #b91c1c; }
         .btn-success { background: #059669; color: #fff; }
         .btn-success:hover { background: #047857; }
-        .progress-bar { width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 12px; overflow: hidden; display: none; }
-        .progress-bar .fill { height: 100%; background: #0f3460; border-radius: 3px; transition: width .3s; width: 0; }
-        .meta { font-size: .8rem; color: #64748b; margin-top: 4px; }
+        .btn-sm { padding: 6px 14px; font-size: .8rem; }
         .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .75rem; font-weight: 500; }
         .tag-ok { background: #d1fae5; color: #065f46; }
         .tag-err { background: #fee2e2; color: #991b1b; }
+        .tag-info { background: #dbeafe; color: #1e40af; }
+        .tag-queued { background: #fef3c7; color: #92400e; }
+        .tag-proc { background: #e0e7ff; color: #3730a3; }
         .size-bar { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .75rem; background: #f1f5f9; color: #475569; font-weight: 500; }
-        .terminal { background: #0d1117; color: #e6edf3; border-radius: 8px; padding: 16px; font-family: 'Courier New', monospace; font-size: .8rem; line-height: 1.5; margin-top: 12px; max-height: 300px; overflow-y: auto; display: none; }
+        .meta { font-size: .8rem; color: #64748b; margin-top: 4px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #e2e8f0; }
+        th { color: #64748b; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: 1px; }
+        td { font-size: .9rem; }
+        .actions { display: flex; gap: 8px; }
+        .empty { text-align: center; color: #94a3b8; padding: 32px; }
+        .progress-bar { width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 12px; overflow: hidden; display: none; }
+        .progress-bar .fill { height: 100%; background: #0f3460; border-radius: 3px; transition: width .3s; width: 0; }
+        .terminal { background: #0d1117; color: #e6edf3; border-radius: 8px; padding: 12px; font-family: 'Courier New', monospace; font-size: .75rem; line-height: 1.5; max-height: 200px; overflow-y: auto; margin-top: 8px; }
         .terminal .line { white-space: pre-wrap; word-break: break-all; }
         .terminal .line.ok { color: #3fb950; }
         .terminal .line.error { color: #f85149; }
@@ -39,17 +49,16 @@
         .terminal .line.checking { color: #d29922; }
         .terminal .line.complete { color: #3fb950; font-weight: bold; }
         .terminal .timestamp { color: #8b949e; margin-right: 8px; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #e2e8f0; }
-        th { color: #64748b; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: 1px; }
-        td { font-size: .9rem; }
-        .actions { display: flex; gap: 8px; }
-        .actions .btn { padding: 6px 14px; font-size: .8rem; }
-        .empty { text-align: center; color: #94a3b8; padding: 32px; }
+        .queue-empty { color: #94a3b8; text-align: center; padding: 16px; font-size: .9rem; }
+        .queue-table td { vertical-align: top; }
+        .queue-table .name-col { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .queue-table .status-col { width: 110px; }
+        .queue-table .log-col { width: auto; }
         @media (max-width: 640px) {
             .container { padding: 12px; }
             th, td { padding: 8px 4px; font-size: .8rem; }
             .actions { flex-direction: column; gap: 4px; }
+            .queue-table .name-col { max-width: 120px; }
         }
     </style>
 </head>
@@ -58,15 +67,19 @@
         <h1>Analizador de Video</h1>
 
         <div class="card">
-            <h2>Subir Video</h2>
+            <h2>Subir Videos</h2>
             <div class="upload-zone" id="uploadZone">
                 <div class="icon">&#128249;</div>
-                <p><strong>Haz clic o arrastra un archivo aquí</strong></p>
-                <p class="meta">Video de 50 MB a 500 MB — Formatos: MP4, WebM, MKV, AVI, MOV</p>
-                <input type="file" id="fileInput" accept=".mp4,.webm,.mkv,.avi,.mov,.mpeg,.wmv">
+                <p><strong>Haz clic o arrastra archivos aquí</strong></p>
+                <p class="meta">Videos de 50 MB a 200 MB — Formatos: MP4, WebM, MKV, AVI, MOV</p>
+                <input type="file" id="fileInput" accept=".mp4,.webm,.mkv,.avi,.mov,.mpeg,.wmv" multiple>
             </div>
             <div class="progress-bar" id="progressBar"><div class="fill" id="progressFill"></div></div>
-            <div class="terminal" id="terminal"></div>
+        </div>
+
+        <div class="card" id="queueCard" style="display:none">
+            <h2>Cola de Procesamiento</h2>
+            <div id="queueContainer"></div>
         </div>
 
         <div class="card">
@@ -80,107 +93,160 @@
         const fileInput = document.getElementById('fileInput');
         const progressBar = document.getElementById('progressBar');
         const progressFill = document.getElementById('progressFill');
-        const terminal = document.getElementById('terminal');
+        const queueCard = document.getElementById('queueCard');
+        const queueContainer = document.getElementById('queueContainer');
+        const terminalMap = {};
+        const esMap = {};
 
         uploadZone.addEventListener('click', () => fileInput.click());
         uploadZone.addEventListener('dragover', e => { e.preventDefault(); uploadZone.classList.add('dragover'); });
         uploadZone.addEventListener('dragleave', () => uploadZone.classList.remove('dragover'));
-        uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
-        fileInput.addEventListener('change', () => { if (fileInput.files[0]) handleFile(fileInput.files[0]); });
+        uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
+        fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFiles(fileInput.files); });
 
-        function handleFile(file) {
-            const sizeMB = file.size / 1024 / 1024;
-            if (sizeMB < 50 || sizeMB > 500) {
-                appendTerminal('error', `El archivo debe pesar entre 50 MB y 500 MB (${sizeMB.toFixed(1)} MB recibidos)`);
-                return;
-            }
-
-            terminal.innerHTML = '';
-            terminal.style.display = 'block';
-            appendTerminal('info', `Iniciando subida: ${file.name} (${sizeMB.toFixed(1)} MB)`);
-
-            const formData = new FormData();
-            formData.append('video', file);
-
+        function handleFiles(files) {
             progressBar.style.display = 'block';
             progressFill.style.width = '0%';
-
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', '/api/upload', true);
-
-            xhr.upload.onprogress = e => {
-                if (e.lengthComputable) progressFill.style.width = (e.loaded / e.total * 100) + '%';
-            };
-
-            xhr.onload = () => {
-                progressBar.style.display = 'none';
-                const data = JSON.parse(xhr.responseText);
-                if (xhr.status === 201) {
-                    appendTerminal('ok', 'Archivo subido al servidor');
-                    startProcessing(data.temp_id, data.temp_filename);
-                } else {
-                    const msg = data.error || 'Error desconocido';
-                    appendTerminal('error', msg);
-                }
-            };
-
-            xhr.onerror = () => {
-                progressBar.style.display = 'none';
-                appendTerminal('error', 'Error de conexión al subir el archivo');
-            };
-
-            xhr.send(formData);
+            let done = 0;
+            for (const file of files) {
+                const formData = new FormData();
+                formData.append('video', file);
+                const xhr = new XMLHttpRequest();
+                xhr.open('POST', '/api/upload', true);
+                xhr.upload.onprogress = e => {
+                    if (e.lengthComputable) {
+                        const total = Array.from(files).reduce((s, f) => s + f.size, 0);
+                        const uploaded = Array.from(files).slice(0, done).reduce((s, f) => s + f.size, 0) + e.loaded;
+                        progressFill.style.width = (uploaded / total * 100) + '%';
+                    }
+                };
+                xhr.onload = () => {
+                    done++;
+                    if (xhr.status === 201) {
+                        const data = JSON.parse(xhr.responseText);
+                        addQueueItem(data.temp_id, data.original_name);
+                        startQueueStream(data.temp_id);
+                    }
+                    if (done === files.length) {
+                        progressBar.style.display = 'none';
+                        progressFill.style.width = '0%';
+                        loadQueue();
+                    }
+                };
+                xhr.onerror = () => { done++; };
+                xhr.send(formData);
+            }
         }
 
-        function startProcessing(tempId, tempFilename) {
-            appendTerminal('info', 'Iniciando análisis...');
-            const evtSource = new EventSource(`/api/process/${tempId}?temp_filename=${encodeURIComponent(tempFilename)}`);
-
-            evtSource.addEventListener('step', e => {
-                const data = JSON.parse(e.data);
-                const status = data.status;
-                const msg = data.message;
-                if (status === 'checking') {
-                    appendTerminal('checking', `\u25E6 ${msg}`);
-                } else if (status === 'ok' || status === 'info') {
-                    const icon = status === 'ok' ? '\u2713' : '\u2192';
-                    appendTerminal(status, `${icon} ${msg}`);
-                } else if (status === 'error') {
-                    appendTerminal('error', `\u2717 ${msg}`);
-                }
-            });
-
-            evtSource.addEventListener('complete', e => {
-                evtSource.close();
-                const data = JSON.parse(e.data);
-                appendTerminal('complete', `\u2713 Proceso completado`);
-                loadVideos();
-            });
-
-            evtSource.addEventListener('error', e => {
-                evtSource.close();
-                let msg = 'Error durante el procesamiento';
-                if (e.data) {
-                    try {
-                        const data = JSON.parse(e.data);
-                        msg = data.message || msg;
-                    } catch (_) {}
-                }
-                appendTerminal('error', `\u2717 ${msg}`);
-            });
+        function addQueueItem(tempId, name) {
+            queueCard.style.display = 'block';
+            const row = document.createElement('div');
+            row.id = 'q-' + tempId;
+            row.style.cssText = 'border-bottom:1px solid #e2e8f0; padding:8px 0';
+            row.innerHTML = `
+                <div style="display:flex; align-items:center; gap:12px">
+                    <div style="flex:1; min-width:0">
+                        <strong style="font-size:.9rem">${escapeHtml(name)}</strong>
+                    </div>
+                    <div id="q-status-${tempId}" style="width:100px">
+                        <span class="tag tag-queued">En cola</span>
+                    </div>
+                    <button class="btn btn-danger btn-sm" onclick="removeQueueItem('${tempId}')">✕</button>
+                </div>
+                <div id="q-terminal-${tempId}" class="terminal" style="display:none"></div>
+            `;
+            queueContainer.appendChild(row);
+            terminalMap[tempId] = [];
         }
 
-        function appendTerminal(type, text) {
+        function appendTerminal(tempId, type, text) {
+            const term = document.getElementById('q-terminal-' + tempId);
+            if (!term) return;
+            term.style.display = 'block';
             const line = document.createElement('div');
             line.className = 'line ' + type;
             const ts = document.createElement('span');
             ts.className = 'timestamp';
-            const now = new Date();
-            ts.textContent = now.toLocaleTimeString('es-ES');
+            ts.textContent = new Date().toLocaleTimeString('es-ES');
             line.appendChild(ts);
             line.appendChild(document.createTextNode(text));
-            terminal.appendChild(line);
-            terminal.scrollTop = terminal.scrollHeight;
+            term.appendChild(line);
+            term.scrollTop = term.scrollHeight;
+        }
+
+        function startQueueStream(tempId) {
+            if (esMap[tempId]) esMap[tempId].close();
+            const es = new EventSource('/api/queue/' + tempId + '/stream');
+            esMap[tempId] = es;
+
+            es.addEventListener('step', e => {
+                const d = JSON.parse(e.data);
+                const status = d.status;
+                const msg = d.message;
+                if (status === 'checking') appendTerminal(tempId, 'checking', '\u25E6 ' + msg);
+                else if (status === 'ok' || status === 'info') appendTerminal(tempId, status, '\u2713 ' + msg);
+                else if (status === 'error') appendTerminal(tempId, 'error', '\u2717 ' + msg);
+            });
+
+            es.addEventListener('complete', () => {
+                es.close();
+                delete esMap[tempId];
+                appendTerminal(tempId, 'complete', '\u2713 Completado');
+                setQueueStatus(tempId, 'done');
+                loadVideos();
+                setTimeout(() => loadQueue(), 1000);
+            });
+
+            es.addEventListener('error', e => {
+                es.close();
+                delete esMap[tempId];
+                let msg = 'Error';
+                if (e.data) {
+                    try { const d = JSON.parse(e.data); msg = d.message || msg; } catch(_) {}
+                }
+                appendTerminal(tempId, 'error', '\u2717 ' + msg);
+                setQueueStatus(tempId, 'error');
+                setTimeout(() => loadQueue(), 1000);
+            });
+
+            setQueueStatus(tempId, 'processing');
+        }
+
+        function setQueueStatus(tempId, status) {
+            const el = document.getElementById('q-status-' + tempId);
+            if (!el) return;
+            let html = '';
+            if (status === 'queued') html = '<span class="tag tag-queued">En cola</span>';
+            else if (status === 'processing') html = '<span class="tag tag-proc">Procesando</span>';
+            else if (status === 'done') html = '<span class="tag tag-ok">Completado</span>';
+            else if (status === 'error') html = '<span class="tag tag-err">Error</span>';
+            el.innerHTML = html;
+        }
+
+        function removeQueueItem(tempId) {
+            fetch('/api/queue/' + tempId, { method: 'DELETE' })
+                .then(r => { if (r.ok) loadQueue(); })
+                .catch(() => {});
+        }
+
+        function loadQueue() {
+            fetch('/api/queue')
+                .then(r => r.json())
+                .then(items => {
+                    const existing = new Set();
+                    items.forEach(item => { existing.add(item.temp_id); });
+                    document.querySelectorAll('[id^="q-"]').forEach(el => {
+                        const id = el.id.replace(/^q-/, '');
+                        if (id && !existing.has(id)) el.remove();
+                    });
+                    if (items.length === 0) {
+                        queueCard.style.display = 'none';
+                        queueContainer.innerHTML = '';
+                        return;
+                    }
+                    queueCard.style.display = 'block';
+                })
+                .catch(() => {});
         }
 
         function loadVideos() {
@@ -192,32 +258,20 @@
                         container.innerHTML = '<p class="empty">No hay videos almacenados</p>';
                         return;
                     }
-                    let html = `
-                        <table>
-                            <thead><tr>
-                                <th>Nombre</th>
-                                <th>Tamaño</th>
-                                <th>Formato</th>
-                                <th>Subido</th>
-                                <th>Acciones</th>
-                            </tr></thead>
-                            <tbody>
-                    `;
+                    let html = '<table><thead><tr><th>Nombre</th><th>Tamaño</th><th>Formato</th><th>Subido</th><th>Acciones</th></tr></thead><tbody>';
                     videos.forEach(v => {
                         const size = (v.size / 1024 / 1024).toFixed(1);
                         const date = new Date(v.uploaded_at).toLocaleString('es-ES');
-                        html += `
-                            <tr>
-                                <td><strong>${escapeHtml(v.original_name)}</strong></td>
-                                <td><span class="size-bar">${size} MB</span></td>
-                                <td><span class="tag tag-ok">${escapeHtml(v.container || '?')}</span></td>
-                                <td>${date}</td>
-                                <td class="actions">
-                                    <a href="/api/download/${v.id}" class="btn btn-success">Descargar</a>
-                                    <button class="btn btn-danger" onclick="deleteVideo('${v.id}')">Eliminar</button>
-                                </td>
-                            </tr>
-                        `;
+                        html += `<tr>
+                            <td><strong>${escapeHtml(v.original_name)}</strong></td>
+                            <td><span class="size-bar">${size} MB</span></td>
+                            <td><span class="tag tag-ok">${escapeHtml(v.container || '?')}</span></td>
+                            <td>${date}</td>
+                            <td class="actions">
+                                <a href="/api/download/${v.id}" class="btn btn-success btn-sm">Descargar</a>
+                                <button class="btn btn-danger btn-sm" onclick="deleteVideo('${v.id}')">Eliminar</button>
+                            </td>
+                        </tr>`;
                     });
                     html += '</tbody></table>';
                     container.innerHTML = html;
@@ -228,15 +282,8 @@
         function deleteVideo(id) {
             if (!confirm('¿Eliminar este video definitivamente?')) return;
             fetch('/api/delete/' + id, { method: 'DELETE' })
-                .then(r => {
-                    if (r.ok) {
-                        loadVideos();
-                        appendTerminal('info', 'Video eliminado correctamente');
-                    } else {
-                        appendTerminal('error', 'Error al eliminar el video');
-                    }
-                })
-                .catch(() => appendTerminal('error', 'Error de conexión'));
+                .then(r => { if (r.ok) loadVideos(); })
+                .catch(() => {});
         }
 
         function escapeHtml(text) {
@@ -245,7 +292,9 @@
             return d.innerHTML;
         }
 
+        loadQueue();
         loadVideos();
+        setInterval(loadQueue, 5000);
     </script>
 </body>
 </html>
