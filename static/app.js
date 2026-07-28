@@ -44,30 +44,37 @@
   function handleFiles(files) {
     progressBar.classList.remove('d-none');
     progressFill.style.width = '0%';
+    const totalSize = Array.from(files).reduce((s, f) => s + f.size, 0);
+    const uploadedBytes = new Array(files.length).fill(0);
     let done = 0;
-    for (const file of files) {
+    Array.from(files).forEach((file, index) => {
       const formData = new FormData();
       formData.append('video', file);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/upload', true);
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) {
-          const total = Array.from(files).reduce((s, f) => s + f.size, 0);
-          const uploaded = Array.from(files).slice(0, done).reduce((s, f) => s + f.size, 0) + e.loaded;
-          progressFill.style.width = (uploaded / total * 100) + '%';
+          uploadedBytes[index] = e.loaded;
+          const totalUploaded = uploadedBytes.reduce((a, b) => a + b, 0);
+          const pct = Math.min(totalUploaded / totalSize * 100, 99.9);
+          progressFill.style.width = pct + '%';
         }
       };
       xhr.onload = () => {
+        uploadedBytes[index] = file.size;
         done++;
         if (done === files.length) {
-          progressBar.classList.add('d-none');
-          progressFill.style.width = '0%';
+          progressFill.style.width = '100%';
+          setTimeout(() => {
+            progressBar.classList.add('d-none');
+            progressFill.style.width = '0%';
+          }, 300);
           loadQueue();
         }
       };
       xhr.onerror = () => { done++; };
       xhr.send(formData);
-    }
+    });
   }
 
   // ───────── Queue ─────────

@@ -199,6 +199,7 @@ class QueueManager:
     def _scheduler_loop(self):
         with self.app.app_context():
             while True:
+                self._recover_stale_processing()
                 temp_id = None
                 with self._lock:
                     processing = sum(
@@ -214,6 +215,23 @@ class QueueManager:
                     self.update_status(temp_id, "processing")
                     self._executor.submit(self._process_item, temp_id)
                 time.sleep(1)
+
+    def _recover_stale_processing(self):
+        try:
+            with self._lock:
+                now = time.time()
+                for qi in list(self._queue.values()):
+                    if qi["status"] == "processing":
+                        if "started_at" not in qi:
+                            qi["started_at"] = now
+                        elif now - qi["started_at"] > 600:
+                            self.app.logger.warning(
+                                "Recovering stale processing item %s", qi["temp_id"]
+                            )
+                            qi["status"] = "queued"
+                            qi.pop("started_at", None)
+        except Exception:
+            pass
 
     def _process_item(self, temp_id):
         try:
@@ -300,6 +318,11 @@ class QueueManager:
                         os.remove(item["temp_path"])
         except Exception:
             self.app.logger.exception("Fatal error in _process_item thread for %s", temp_id)
+            with self._lock:
+                qi = self._queue.get(temp_id)
+                if qi:
+                    qi["status"] = "error"
+                    qi["error"] = "Fatal error interno"
 
 
 # -----------------------------------------------------------------------
