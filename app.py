@@ -378,7 +378,7 @@ def queue_remove(temp_id):
         item = _queue.get(temp_id)
         if not item:
             return jsonify({"error": "Item no encontrado"}), 404
-        if item["status"] in ("processing", "done"):
+        if item["status"] == "processing":
             return jsonify({"error": f"No se puede eliminar un item en estado: {item['status']}"}), 400
         _queue.pop(temp_id, None)
         if os.path.exists(item["temp_path"]):

@@ -190,10 +190,8 @@
                 delete esMap[tempId];
                 appendTerminal(tempId, 'complete', '\u2713 Completado');
                 setQueueStatus(tempId, 'done');
-                const actions = document.getElementById('q-actions-' + tempId);
-                if (actions) actions.innerHTML = '';
                 loadVideos();
-                setTimeout(() => loadQueue(), 1000);
+                setTimeout(() => removeQueueItem(tempId), 2000);
             });
 
             es.addEventListener('error', e => {
@@ -205,9 +203,7 @@
                 }
                 appendTerminal(tempId, 'error', '\u2717 ' + msg);
                 setQueueStatus(tempId, 'error');
-                const actions = document.getElementById('q-actions-' + tempId);
-                if (actions) actions.innerHTML = '';
-                setTimeout(() => loadQueue(), 1000);
+                setTimeout(() => removeQueueItem(tempId), 3000);
             });
         }
 
