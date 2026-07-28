@@ -1,10 +1,10 @@
 FROM python:3-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends clamav ffmpeg wget ca-certificates && \
+RUN apt-get update && apt-get install -y --no-install-recommends clamav ffmpeg curl ca-certificates && \
     mkdir -p /var/lib/clamav && \
-    wget -q -t 3 -O /var/lib/clamav/main.cvd https://packages.clamav.net/main.cvd && \
-    wget -q -t 3 -O /var/lib/clamav/daily.cvd https://packages.clamav.net/daily.cvd && \
-    wget -q -t 3 -O /var/lib/clamav/bytecode.cvd https://packages.clamav.net/bytecode.cvd && \
+    curl -sL -A "ClamAV/1.4.3" -o /var/lib/clamav/main.cvd http://db.local.clamav.net/main.cvd && \
+    curl -sL -A "ClamAV/1.4.3" -o /var/lib/clamav/daily.cvd http://db.local.clamav.net/daily.cvd && \
+    curl -sL -A "ClamAV/1.4.3" -o /var/lib/clamav/bytecode.cvd http://db.local.clamav.net/bytecode.cvd && \
     chmod 644 /var/lib/clamav/*.cvd && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
