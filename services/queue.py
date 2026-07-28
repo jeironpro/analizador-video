@@ -29,7 +29,9 @@ class QueueManager:
         self.db = db
         self._queue = OrderedDict()
         self._lock = threading.Lock()
-        self._executor = ThreadPoolExecutor(max_workers=2)
+        self._executor = ThreadPoolExecutor(max_workers=1)
+
+
         self._scheduler_running = False
         self._upload_folder = app.config["UPLOAD_FOLDER"]
 
@@ -221,7 +223,7 @@ class QueueManager:
                     processing = sum(
                         1 for qi in self._queue.values() if qi["status"] == "processing"
                     )
-                    if processing < 2:
+                    if processing < 1:
                         for qi in self._queue.values():
                             if qi["status"] == "queued":
                                 qi["status"] = "processing"
