@@ -18,7 +18,4 @@ RUN mkdir -p /var/run/clamav && chmod 755 /var/run/clamav
 
 ENV RENDER=true
 
-CMD mkdir -p /var/run/clamav && \
-    clamd --config-file /etc/clamav/clamd.conf &
-    until clamdscan --ping --config-file /etc/clamav/clamd.conf 2>/dev/null; do sleep 1; done && \
-    gunicorn app:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1 --worker-class sync
+CMD ["/bin/sh", "/opt/render/project/src/start.sh"]
