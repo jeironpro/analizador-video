@@ -273,9 +273,9 @@
                             if (actions) actions.innerHTML = '';
                         }
                     });
-                    document.querySelectorAll('[id^="q-"]').forEach(el => {
+                    document.querySelectorAll('#queueContainer > .item-row').forEach(el => {
                         const id = el.id.replace(/^q-/, '');
-                        if (id && id.length > 10 && !existingIds.has(id)) el.remove();
+                        if (id && !existingIds.has(id)) el.remove();
                     });
                     if (items.length === 0) {
                         queueCard.style.display = 'none';
