@@ -19,7 +19,7 @@
         document.querySelector('#confirmModal [data-bs-dismiss="modal"]').removeEventListener('click', cancelHandler);
         document.getElementById('confirmModal').removeEventListener('hidden.bs.modal', hideHandler);
       }
-      function okHandler() { cleanup(); resolve(true); }
+      function okHandler() { cleanup(); confirmModal.hide(); resolve(true); }
       function cancelHandler() { cleanup(); resolve(false); }
       function hideHandler() { cleanup(); resolve(false); }
     });
