@@ -129,22 +129,6 @@ def _sse_error(message: str):
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
     try:
         result = subprocess.run(
-            ["clamdscan", "--no-summary", "--config-file=/etc/clamav/clamd.conf",
-             "--stdout", "--quiet", filepath],
-            capture_output=True, text=True, timeout=300,
-        )
-        if result.returncode == 0:
-            return True, "Archivo limpio"
-        if result.returncode == 1:
-            return False, f"Virus detectado: {result.stdout.strip()}"
-    except FileNotFoundError:
-        pass
-    except subprocess.TimeoutExpired:
-        pass
-    except Exception:
-        pass
-    try:
-        result = subprocess.run(
             ["clamscan", "--stdout", "--no-summary", "--quiet",
              "--database=/var/lib/clamav", filepath],
             capture_output=True, text=True, timeout=300,
