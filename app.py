@@ -1,8 +1,12 @@
 import os
 import uuid
+import json
 import mimetypes
+import time
 from datetime import datetime, timezone
-from flask import Flask, request, render_template, jsonify, send_file
+from flask import (
+    Flask, request, render_template, jsonify, send_file, Response, stream_with_context
+)
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import inspect as sa_inspect
 from werkzeug.utils import secure_filename
@@ -63,6 +67,7 @@ class Video(db.Model):
 
 _db_initialized = False
 
+
 def _init_db():
     global _db_initialized
     if _db_initialized:
@@ -104,7 +109,20 @@ def _migrate_schema():
             trans.rollback()
             raise
 
+
 _init_db()
+
+
+def _sse_step(step: str, status: str, message: str):
+    return f"event: step\ndata: {json.dumps({'step': step, 'status': status, 'message': message})}\n\n"
+
+
+def _sse_complete(data: dict):
+    return f"event: complete\ndata: {json.dumps(data)}\n\n"
+
+
+def _sse_error(message: str):
+    return f"event: error\ndata: {json.dumps({'message': message})}\n\n"
 
 
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
@@ -131,10 +149,10 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
 def validate_file_size(filepath: str) -> tuple[bool, str]:
     size = os.path.getsize(filepath)
     if size < 50 * 1024 * 1024:
-        return False, f"El archivo es demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 50 MB"
+        return False, f"Demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 50 MB"
     if size > 500 * 1024 * 1024:
-        return False, f"El archivo es demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 200 MB"
-    return True, "OK"
+        return False, f"Demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 200 MB"
+    return True, f"{size / 1024 / 1024:.1f} MB"
 
 
 def validate_mime_type(filepath: str) -> tuple[bool, str]:
@@ -186,67 +204,122 @@ def upload():
     temp_path = os.path.join(app.config["TEMP_FOLDER"], temp_filename)
     file.save(temp_path)
 
-    try:
-        valid_size, msg = validate_file_size(temp_path)
-        if not valid_size:
-            return jsonify({"error": msg}), 400
+    return jsonify({"temp_id": temp_id, "original_name": safe_name, "temp_filename": temp_filename}), 201
 
-        valid_mime, mime_or_msg = validate_mime_type(temp_path)
-        if not valid_mime:
-            return jsonify({"error": mime_or_msg}), 400
-        mime_type = mime_or_msg
 
-        clam_ok, clam_msg = scan_with_clamav(temp_path)
-        if not clam_ok:
-            return jsonify({"error": f"ClamAV: {clam_msg}"}), 400
+@app.route("/api/process/<temp_id>")
+def process(temp_id):
+    temp_filename = request.args.get("temp_filename")
+    if not temp_filename:
+        return "temp_filename parameter required", 400
 
-        analysis = analyze_video(temp_path)
+    temp_path = os.path.join(app.config["TEMP_FOLDER"], temp_filename)
+    if not os.path.exists(temp_path):
+        return jsonify({"error": "Archivo temporal no encontrado"}), 404
 
-        if not analysis.get("valid", False):
-            errors = analysis.get("errors", [])
-            return jsonify({
-                "error": "Análisis de video fallido",
-                "details": errors
-            }), 400
+    ext = os.path.splitext(temp_filename)[1]
+    safe_name = temp_filename.split("_", 1)[1] if "_" in temp_filename else temp_filename
+    saved_video = None
 
-        video_id = str(uuid.uuid4())
-        filename = f"{video_id}{ext}"
-        final_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+    def generate():
+        nonlocal saved_video
+        try:
+            yield _sse_step("size", "checking", "Validando tamaño...")
+            valid_size, size_msg = validate_file_size(temp_path)
+            if not valid_size:
+                yield _sse_step("size", "error", size_msg)
+                yield _sse_error(size_msg)
+                return
+            yield _sse_step("size", "ok", size_msg)
+            time.sleep(0.1)
 
-        import shutil
-        shutil.move(temp_path, final_path)
+            yield _sse_step("mime", "checking", "Detectando tipo MIME...")
+            valid_mime, mime_or_msg = validate_mime_type(temp_path)
+            if not valid_mime:
+                yield _sse_step("mime", "error", mime_or_msg)
+                yield _sse_error(mime_or_msg)
+                return
+            yield _sse_step("mime", "ok", mime_or_msg)
+            time.sleep(0.1)
 
-        video = Video(
-            id=video_id,
-            filename=filename,
-            original_name=safe_name,
-            size=os.path.getsize(final_path),
-            container=analysis.get("container", ext.lstrip(".")),
-            mime_type=mime_type,
-            analysis_result=str(analysis.get("errors", [])),
-            clamav_result=clam_msg,
-        )
+            yield _sse_step("clamav", "checking", "Escaneando con ClamAV...")
+            clam_ok, clam_msg = scan_with_clamav(temp_path)
+            if not clam_ok:
+                yield _sse_step("clamav", "error", clam_msg)
+                yield _sse_error(f"ClamAV: {clam_msg}")
+                return
+            yield _sse_step("clamav", "ok", clam_msg)
+            time.sleep(0.1)
 
-        db.session.add(video)
-        db.session.commit()
+            yield _sse_step("analysis", "checking", "Analizando codecs y metadatos...")
+            analysis = analyze_video(temp_path)
+            if not analysis.get("valid", False):
+                errors = analysis.get("errors", [])
+                for err in errors:
+                    yield _sse_step("analysis", "error", err)
+                yield _sse_error("Análisis de video fallido")
+                return
+            yield _sse_step("analysis", "ok", f"Contenedor: {analysis.get('container')}")
+            for s in analysis.get("streams", []):
+                if s["type"] == "video":
+                    yield _sse_step("stream", "info", f"Video: {s['codec']} {s['resolution']} @ {s['fps']} fps")
+                else:
+                    yield _sse_step("stream", "info", f"Audio: {s['codec']} {s.get('channels', '?')}ch")
+            time.sleep(0.1)
 
-        return jsonify({
-            "message": "Video subido y analizado correctamente",
-            "video": video.to_dict(),
-            "analysis": {
-                "container": analysis.get("container"),
-                "streams": analysis.get("streams", []),
-            },
-            "clamav": clam_msg,
-        }), 201
+            yield _sse_step("save", "checking", "Guardando archivo...")
+            import shutil
+            video_id = str(uuid.uuid4())
+            filename = f"{video_id}{ext}"
+            final_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+            shutil.move(temp_path, final_path)
 
-    except VideoAnalysisError as e:
-        return jsonify({"error": f"Error de análisis: {str(e)}"}), 400
-    except Exception as e:
-        return jsonify({"error": f"Error interno: {str(e)}"}), 500
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+            mime_type = validate_mime_type(final_path)
+            mime_val = mime_type[1] if mime_type[0] else "application/octet-stream"
+
+            video = Video(
+                id=video_id,
+                filename=filename,
+                original_name=safe_name,
+                size=os.path.getsize(final_path),
+                container=analysis.get("container", ext.lstrip(".")),
+                mime_type=mime_val,
+                analysis_result=str(analysis.get("errors", [])),
+                clamav_result=clam_msg,
+            )
+            db.session.add(video)
+            db.session.commit()
+            saved_video = video
+
+            yield _sse_step("save", "ok", "Video almacenado correctamente")
+            time.sleep(0.1)
+
+            yield _sse_step("complete", "ok", "Proceso finalizado")
+            yield _sse_complete({
+                "video": video.to_dict(),
+                "analysis": {
+                    "container": analysis.get("container"),
+                    "streams": analysis.get("streams", []),
+                },
+            })
+
+        except VideoAnalysisError as e:
+            yield _sse_error(f"Error de análisis: {str(e)}")
+        except Exception as e:
+            app.logger.exception("Error en process")
+            yield _sse_error(f"Error interno: {str(e)}")
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.route("/api/download/<video_id>", methods=["GET"])

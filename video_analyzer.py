@@ -4,7 +4,7 @@ import struct
 from datetime import datetime, timezone
 
 
-ALLOWED_VIDEO_CODECS = {"h264", "hevc", "vp9", "av1", "mpeg4"}
+ALLOWED_VIDEO_CODECS = {"h264", "hevc", "vp9", "av1", "mpeg4", "png", "prores", "dnxhd", "mpeg2video"}
 ALLOWED_AUDIO_CODECS = {"aac", "mp3", "opus", "vorbis", "pcm_s16le"}
 ALLOWED_CONTAINERS = {"mp4", "webm", "mkv", "avi", "mov"}
 MAX_RESOLUTION = (7680, 4320)
@@ -13,11 +13,11 @@ MAX_FRAME_RATE = 120
 MIN_FRAME_RATE = 1
 MAX_DURATION_SECONDS = 86400
 CONTAINER_CODEC_MAP = {
-    "mp4":  {"h264", "hevc", "aac", "mp3"},
+    "mp4":  {"h264", "hevc", "aac", "mp3", "png", "prores", "mpeg2video"},
     "webm": {"vp9", "vp8", "opus", "vorbis"},
     "mkv":  {"h264", "hevc", "vp9", "av1", "aac", "opus", "vorbis", "mp3"},
     "avi":  {"mpeg4", "mp3", "pcm_s16le"},
-    "mov":  {"h264", "hevc", "aac", "mp3", "pcm_s16le"},
+    "mov":  {"h264", "hevc", "aac", "mp3", "pcm_s16le", "png", "prores"},
 }
 
 
@@ -83,6 +83,13 @@ def analyze_video(filepath: str) -> dict:
             fps = float(num) / float(den) if float(den) != 0 else 0
         except (ValueError, ZeroDivisionError):
             fps = 0
+        if fps > 1000:
+            avg_frame_rate = vs.get("avg_frame_rate", "0/1")
+            try:
+                num, den = avg_frame_rate.split("/")
+                fps = float(num) / float(den) if float(den) != 0 else 0
+            except (ValueError, ZeroDivisionError):
+                fps = 0
 
         if codec not in ALLOWED_VIDEO_CODECS:
             errors.append(f"Códec de video no permitido: {codec}")
