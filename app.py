@@ -18,7 +18,7 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
 }
-app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
 
 base_dir = os.environ.get("UPLOAD_DIR", "/data" if os.environ.get("RENDER") else app.instance_path)
 app.config["UPLOAD_FOLDER"] = os.path.join(base_dir, "uploads")
@@ -132,7 +132,7 @@ def validate_file_size(filepath: str) -> tuple[bool, str]:
     size = os.path.getsize(filepath)
     if size < 50 * 1024 * 1024:
         return False, f"El archivo es demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 50 MB"
-    if size > 200 * 1024 * 1024:
+    if size > 500 * 1024 * 1024:
         return False, f"El archivo es demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 200 MB"
     return True, "OK"
 

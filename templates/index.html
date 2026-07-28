@@ -89,7 +89,7 @@
             uploadStatus.style.display = 'none';
 
             const sizeMB = file.size / 1024 / 1024;
-            if (sizeMB < 50 || sizeMB > 200) {
+            if (sizeMB < 50 || sizeMB > 500) {
                 showStatus('error', `El archivo debe pesar entre 50 MB y 200 MB (${sizeMB.toFixed(1)} MB recibidos)`);
                 return;
             }
