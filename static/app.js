@@ -3,6 +3,27 @@
   const fileInput = document.getElementById('fileInput');
   const progressBar = document.getElementById('progressBar');
   const progressFill = document.getElementById('progressFill');
+  const confirmModal = new bootstrap.Modal('#confirmModal');
+  const confirmMessage = document.getElementById('confirmMessage');
+  const confirmOk = document.getElementById('confirmOk');
+
+  function showConfirm(msg) {
+    return new Promise(resolve => {
+      confirmMessage.textContent = msg;
+      confirmOk.addEventListener('click', okHandler);
+      document.querySelector('#confirmModal [data-bs-dismiss="modal"]').addEventListener('click', cancelHandler);
+      document.getElementById('confirmModal').addEventListener('hidden.bs.modal', hideHandler);
+      confirmModal.show();
+      function cleanup() {
+        confirmOk.removeEventListener('click', okHandler);
+        document.querySelector('#confirmModal [data-bs-dismiss="modal"]').removeEventListener('click', cancelHandler);
+        document.getElementById('confirmModal').removeEventListener('hidden.bs.modal', hideHandler);
+      }
+      function okHandler() { cleanup(); resolve(true); }
+      function cancelHandler() { cleanup(); resolve(false); }
+      function hideHandler() { cleanup(); resolve(false); }
+    });
+  }
   const queueCard = document.getElementById('queueCard');
   const queueContainer = document.getElementById('queueContainer');
   const videoContainer = document.getElementById('videoContainer');
@@ -307,8 +328,9 @@
       .catch(() => {});
   }
 
-  window._deleteVideo = function (id) {
-    if (!confirm('¿Eliminar este video definitivamente?')) return;
+  window._deleteVideo = async function (id) {
+    const ok = await showConfirm('¿Eliminar este video definitivamente?');
+    if (!ok) return;
     fetch('/api/delete/' + id, { method: 'DELETE' })
       .then(r => { if (r.ok) loadVideos(); })
       .catch(() => {});
