@@ -29,19 +29,19 @@
         .tag-ok { background: #d1fae5; color: #065f46; }
         .tag-err { background: #fee2e2; color: #991b1b; }
         .tag-info { background: #dbeafe; color: #1e40af; }
+        .tag-subido { background: #f1f5f9; color: #475569; }
         .tag-queued { background: #fef3c7; color: #92400e; }
         .tag-proc { background: #e0e7ff; color: #3730a3; }
-        .size-bar { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: .75rem; background: #f1f5f9; color: #475569; font-weight: 500; }
         .meta { font-size: .8rem; color: #64748b; margin-top: 4px; }
         table { width: 100%; border-collapse: collapse; }
         th, td { text-align: left; padding: 12px 8px; border-bottom: 1px solid #e2e8f0; }
         th { color: #64748b; font-weight: 600; font-size: .8rem; text-transform: uppercase; letter-spacing: 1px; }
         td { font-size: .9rem; }
-        .actions { display: flex; gap: 8px; }
+        .actions { display: flex; gap: 8px; flex-wrap: wrap; }
         .empty { text-align: center; color: #94a3b8; padding: 32px; }
         .progress-bar { width: 100%; height: 6px; background: #e2e8f0; border-radius: 3px; margin-top: 12px; overflow: hidden; display: none; }
         .progress-bar .fill { height: 100%; background: #0f3460; border-radius: 3px; transition: width .3s; width: 0; }
-        .terminal { background: #0d1117; color: #e6edf3; border-radius: 8px; padding: 12px; font-family: 'Courier New', monospace; font-size: .75rem; line-height: 1.5; max-height: 200px; overflow-y: auto; margin-top: 8px; }
+        .terminal { background: #0d1117; color: #e6edf3; border-radius: 8px; padding: 12px; font-family: 'Courier New', monospace; font-size: .75rem; line-height: 1.5; max-height: 200px; overflow-y: auto; margin-top: 8px; display: none; }
         .terminal .line { white-space: pre-wrap; word-break: break-all; }
         .terminal .line.ok { color: #3fb950; }
         .terminal .line.error { color: #f85149; }
@@ -49,16 +49,16 @@
         .terminal .line.checking { color: #d29922; }
         .terminal .line.complete { color: #3fb950; font-weight: bold; }
         .terminal .timestamp { color: #8b949e; margin-right: 8px; }
-        .queue-empty { color: #94a3b8; text-align: center; padding: 16px; font-size: .9rem; }
-        .queue-table td { vertical-align: top; }
-        .queue-table .name-col { max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .queue-table .status-col { width: 110px; }
-        .queue-table .log-col { width: auto; }
+        .item-row { border-bottom: 1px solid #e2e8f0; padding: 10px 0; }
+        .item-header { display: flex; align-items: center; gap: 12px; }
+        .item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+        .item-status { width: 110px; text-align: center; }
         @media (max-width: 640px) {
             .container { padding: 12px; }
             th, td { padding: 8px 4px; font-size: .8rem; }
             .actions { flex-direction: column; gap: 4px; }
-            .queue-table .name-col { max-width: 120px; }
+            .item-header { flex-wrap: wrap; }
+            .item-status { width: auto; }
         }
     </style>
 </head>
@@ -95,7 +95,6 @@
         const progressFill = document.getElementById('progressFill');
         const queueCard = document.getElementById('queueCard');
         const queueContainer = document.getElementById('queueContainer');
-        const terminalMap = {};
         const esMap = {};
 
         uploadZone.addEventListener('click', () => fileInput.click());
@@ -125,7 +124,6 @@
                     if (xhr.status === 201) {
                         const data = JSON.parse(xhr.responseText);
                         addQueueItem(data.temp_id, data.original_name);
-                        startQueueStream(data.temp_id);
                     }
                     if (done === files.length) {
                         progressBar.style.display = 'none';
@@ -142,21 +140,75 @@
             queueCard.style.display = 'block';
             const row = document.createElement('div');
             row.id = 'q-' + tempId;
-            row.style.cssText = 'border-bottom:1px solid #e2e8f0; padding:8px 0';
+            row.className = 'item-row';
             row.innerHTML = `
-                <div style="display:flex; align-items:center; gap:12px">
-                    <div style="flex:1; min-width:0">
-                        <strong style="font-size:.9rem">${escapeHtml(name)}</strong>
+                <div class="item-header">
+                    <div class="item-name"><strong>${escapeHtml(name)}</strong></div>
+                    <div class="item-status" id="q-status-${tempId}"><span class="tag tag-subido">Subido</span></div>
+                    <div class="actions" id="q-actions-${tempId}">
+                        <button class="btn btn-primary btn-sm" onclick="processItem('${tempId}')">Procesar</button>
+                        <button class="btn btn-danger btn-sm" onclick="removeQueueItem('${tempId}')">Eliminar</button>
                     </div>
-                    <div id="q-status-${tempId}" style="width:100px">
-                        <span class="tag tag-queued">En cola</span>
-                    </div>
-                    <button class="btn btn-danger btn-sm" onclick="removeQueueItem('${tempId}')">✕</button>
                 </div>
-                <div id="q-terminal-${tempId}" class="terminal" style="display:none"></div>
+                <div id="q-terminal-${tempId}" class="terminal"></div>
             `;
             queueContainer.appendChild(row);
-            terminalMap[tempId] = [];
+        }
+
+        function processItem(tempId) {
+            setQueueStatus(tempId, 'queued');
+            const actions = document.getElementById('q-actions-' + tempId);
+            if (actions) actions.innerHTML = '<span class="meta">En cola...</span>';
+            fetch('/api/queue/' + tempId + '/process', { method: 'POST' })
+                .then(r => {
+                    if (r.ok) {
+                        startQueueStream(tempId);
+                    } else {
+                        setQueueStatus(tempId, 'error');
+                    }
+                })
+                .catch(() => setQueueStatus(tempId, 'error'));
+        }
+
+        function startQueueStream(tempId) {
+            if (esMap[tempId]) esMap[tempId].close();
+            const es = new EventSource('/api/queue/' + tempId + '/stream');
+            esMap[tempId] = es;
+
+            es.addEventListener('step', e => {
+                const d = JSON.parse(e.data);
+                const status = d.status;
+                const msg = d.message;
+                setQueueStatus(tempId, 'processing');
+                if (status === 'checking') appendTerminal(tempId, 'checking', '\u25E6 ' + msg);
+                else if (status === 'ok' || status === 'info') appendTerminal(tempId, status, '\u2713 ' + msg);
+                else if (status === 'error') appendTerminal(tempId, 'error', '\u2717 ' + msg);
+            });
+
+            es.addEventListener('complete', () => {
+                es.close();
+                delete esMap[tempId];
+                appendTerminal(tempId, 'complete', '\u2713 Completado');
+                setQueueStatus(tempId, 'done');
+                const actions = document.getElementById('q-actions-' + tempId);
+                if (actions) actions.innerHTML = '';
+                loadVideos();
+                setTimeout(() => loadQueue(), 1000);
+            });
+
+            es.addEventListener('error', e => {
+                es.close();
+                delete esMap[tempId];
+                let msg = 'Error';
+                if (e.data) {
+                    try { const d = JSON.parse(e.data); msg = d.message || msg; } catch(_) {}
+                }
+                appendTerminal(tempId, 'error', '\u2717 ' + msg);
+                setQueueStatus(tempId, 'error');
+                const actions = document.getElementById('q-actions-' + tempId);
+                if (actions) actions.innerHTML = '';
+                setTimeout(() => loadQueue(), 1000);
+            });
         }
 
         function appendTerminal(tempId, type, text) {
@@ -174,53 +226,18 @@
             term.scrollTop = term.scrollHeight;
         }
 
-        function startQueueStream(tempId) {
-            if (esMap[tempId]) esMap[tempId].close();
-            const es = new EventSource('/api/queue/' + tempId + '/stream');
-            esMap[tempId] = es;
-
-            es.addEventListener('step', e => {
-                const d = JSON.parse(e.data);
-                const status = d.status;
-                const msg = d.message;
-                if (status === 'checking') appendTerminal(tempId, 'checking', '\u25E6 ' + msg);
-                else if (status === 'ok' || status === 'info') appendTerminal(tempId, status, '\u2713 ' + msg);
-                else if (status === 'error') appendTerminal(tempId, 'error', '\u2717 ' + msg);
-            });
-
-            es.addEventListener('complete', () => {
-                es.close();
-                delete esMap[tempId];
-                appendTerminal(tempId, 'complete', '\u2713 Completado');
-                setQueueStatus(tempId, 'done');
-                loadVideos();
-                setTimeout(() => loadQueue(), 1000);
-            });
-
-            es.addEventListener('error', e => {
-                es.close();
-                delete esMap[tempId];
-                let msg = 'Error';
-                if (e.data) {
-                    try { const d = JSON.parse(e.data); msg = d.message || msg; } catch(_) {}
-                }
-                appendTerminal(tempId, 'error', '\u2717 ' + msg);
-                setQueueStatus(tempId, 'error');
-                setTimeout(() => loadQueue(), 1000);
-            });
-
-            setQueueStatus(tempId, 'processing');
-        }
-
         function setQueueStatus(tempId, status) {
             const el = document.getElementById('q-status-' + tempId);
             if (!el) return;
-            let html = '';
-            if (status === 'queued') html = '<span class="tag tag-queued">En cola</span>';
-            else if (status === 'processing') html = '<span class="tag tag-proc">Procesando</span>';
-            else if (status === 'done') html = '<span class="tag tag-ok">Completado</span>';
-            else if (status === 'error') html = '<span class="tag tag-err">Error</span>';
-            el.innerHTML = html;
+            const map = {
+                uploaded: ['tag-subido', 'Subido'],
+                queued: ['tag-queued', 'En cola'],
+                processing: ['tag-proc', 'Procesando'],
+                done: ['tag-ok', 'Completado'],
+                error: ['tag-err', 'Error'],
+            };
+            const [cls, label] = map[status] || ['tag-info', status];
+            el.innerHTML = `<span class="tag ${cls}">${label}</span>`;
         }
 
         function removeQueueItem(tempId) {
@@ -233,18 +250,39 @@
             fetch('/api/queue')
                 .then(r => r.json())
                 .then(items => {
-                    const existing = new Set();
-                    items.forEach(item => { existing.add(item.temp_id); });
+                    const existingIds = new Set(items.map(i => i.temp_id));
+                    items.forEach(item => {
+                        if (!document.getElementById('q-' + item.temp_id)) {
+                            addQueueItem(item.temp_id, item.original_name || 'video');
+                        }
+                        setQueueStatus(item.temp_id, item.status);
+                        if (item.status === 'processing' || item.status === 'queued') {
+                            if (!esMap[item.temp_id]) startQueueStream(item.temp_id);
+                        }
+                        if (item.status === 'uploaded') {
+                            const actions = document.getElementById('q-actions-' + item.temp_id);
+                            if (actions) {
+                                actions.innerHTML = `
+                                    <button class="btn btn-primary btn-sm" onclick="processItem('${item.temp_id}')">Procesar</button>
+                                    <button class="btn btn-danger btn-sm" onclick="removeQueueItem('${item.temp_id}')">Eliminar</button>
+                                `;
+                            }
+                        }
+                        if (item.status === 'done' || item.status === 'error') {
+                            const actions = document.getElementById('q-actions-' + item.temp_id);
+                            if (actions) actions.innerHTML = '';
+                        }
+                    });
                     document.querySelectorAll('[id^="q-"]').forEach(el => {
                         const id = el.id.replace(/^q-/, '');
-                        if (id && !existing.has(id)) el.remove();
+                        if (id && id.length > 10 && !existingIds.has(id)) el.remove();
                     });
                     if (items.length === 0) {
                         queueCard.style.display = 'none';
                         queueContainer.innerHTML = '';
-                        return;
+                    } else {
+                        queueCard.style.display = 'block';
                     }
-                    queueCard.style.display = 'block';
                 })
                 .catch(() => {});
         }
@@ -264,7 +302,7 @@
                         const date = new Date(v.uploaded_at).toLocaleString('es-ES');
                         html += `<tr>
                             <td><strong>${escapeHtml(v.original_name)}</strong></td>
-                            <td><span class="size-bar">${size} MB</span></td>
+                            <td><span class="tag tag-info">${size} MB</span></td>
                             <td><span class="tag tag-ok">${escapeHtml(v.container || '?')}</span></td>
                             <td>${date}</td>
                             <td class="actions">

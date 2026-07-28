@@ -119,13 +119,11 @@ def _queue_add(temp_id, temp_path, temp_filename, original_name, ext):
             "temp_filename": temp_filename,
             "original_name": original_name,
             "ext": ext,
-            "status": "queued",
+            "status": "uploaded",
             "logs": [],
             "result": None,
             "error": None,
-            "position": len(_queue),
         }
-    _start_queue_worker()
 
 def _queue_log(temp_id, step, status, message):
     with _queue_lock:
@@ -267,7 +265,7 @@ def validate_file_size(filepath: str) -> tuple[bool, str]:
     if size < 50 * 1024 * 1024:
         return False, f"Demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 50 MB"
     if size > 500 * 1024 * 1024:
-        return False, f"Demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 200 MB"
+        return False, f"Demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 500 MB"
     return True, f"{size / 1024 / 1024:.1f} MB"
 
 
@@ -333,6 +331,19 @@ def list_queue():
     return jsonify(items)
 
 
+@app.route("/api/queue/<temp_id>/process", methods=["POST"])
+def queue_process(temp_id):
+    with _queue_lock:
+        item = _queue.get(temp_id)
+        if not item:
+            return jsonify({"error": "Item no encontrado"}), 404
+        if item["status"] != "uploaded":
+            return jsonify({"error": f"El item está en estado: {item['status']}"}), 400
+        item["status"] = "queued"
+    _start_queue_worker()
+    return jsonify({"message": "Item agregado a la cola de procesamiento"}), 200
+
+
 @app.route("/api/queue/<temp_id>/stream")
 def queue_stream(temp_id):
     def generate():
@@ -364,12 +375,15 @@ def queue_stream(temp_id):
 @app.route("/api/queue/<temp_id>", methods=["DELETE"])
 def queue_remove(temp_id):
     with _queue_lock:
-        item = _queue.pop(temp_id, None)
-        if item and item["status"] == "queued":
-            if os.path.exists(item["temp_path"]):
-                os.remove(item["temp_path"])
-            return jsonify({"message": "Item eliminado de la cola"}), 200
-    return jsonify({"error": "Item no encontrado o ya procesándose"}), 404
+        item = _queue.get(temp_id)
+        if not item:
+            return jsonify({"error": "Item no encontrado"}), 404
+        if item["status"] in ("processing", "done"):
+            return jsonify({"error": f"No se puede eliminar un item en estado: {item['status']}"}), 400
+        _queue.pop(temp_id, None)
+        if os.path.exists(item["temp_path"]):
+            os.remove(item["temp_path"])
+    return jsonify({"message": "Item eliminado de la cola"}), 200
 
 
 @app.route("/api/download/<video_id>", methods=["GET"])
