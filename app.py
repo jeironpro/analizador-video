@@ -126,62 +126,20 @@ def _sse_error(message: str):
     return f"event: error\ndata: {json.dumps({'message': message})}\n\n"
 
 
-def _ensure_clamav():
-    import shutil
-    clamscan = shutil.which("clamscan")
-    if clamscan:
-        return clamscan
-    base = app.config.get("TEMP_FOLDER", "/tmp")
-    cache_dir = os.path.join(base, ".clamav")
-    os.makedirs(cache_dir, exist_ok=True)
-    binary = os.path.join(cache_dir, "clamscan")
-    if os.path.exists(binary):
-        return binary
-    import tarfile, io
-    url = "https://github.com/nickg/clamav-static/releases/download/v1.4.1/clamav-1.4.1-x86_64-linux-musl.tar.gz"
-    try:
-        import httpx
-        resp = httpx.get(url, follow_redirects=True, timeout=120)
-        resp.raise_for_status()
-        tarball = tarfile.open(fileobj=io.BytesIO(resp.content))
-        tarball.extract("clamscan", path=cache_dir)
-        os.rename(os.path.join(cache_dir, "clamscan"), binary)
-        tarball.extract("freshclam", path=cache_dir)
-        os.rename(os.path.join(cache_dir, "freshclam"), os.path.join(cache_dir, "freshclam"))
-        main_cvd = None
-        for m in tarball.getmembers():
-            if m.name.endswith(".cvd") or m.name.endswith(".cld"):
-                main_cvd = m
-        if main_cvd:
-            tarball.extract(main_cvd, path=cache_dir)
-            db_dir = os.path.join(cache_dir, "var", "lib", "clamav")
-            os.makedirs(db_dir, exist_ok=True)
-            src = os.path.join(cache_dir, main_cvd.name)
-            dst = os.path.join(db_dir, os.path.basename(main_cvd.name))
-            if os.path.exists(src) and not os.path.exists(dst):
-                import shutil
-                shutil.move(src, dst)
-        os.chmod(binary, 0o755)
-    except Exception as e:
-        app.logger.warning("No se pudo descargar ClamAV estático: %s", e)
-        return None
-    return binary
-
-
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
-    binary = _ensure_clamav()
-    if not binary:
-        return True, "ClamAV no disponible"
     try:
         result = subprocess.run(
-            [binary, "--stdout", "--no-summary", "--quiet", filepath],
+            ["clamscan", "--stdout", "--no-summary", "--quiet", filepath],
             capture_output=True, text=True, timeout=120,
         )
         if result.returncode == 0:
             return True, "Archivo limpio"
         if result.returncode == 1:
             return False, f"Virus detectado: {result.stdout.strip()}"
-        return True, f"ClamAV: error ({result.returncode})"
+        err = result.stderr.strip()
+        return True, f"ClamAV: error ({result.returncode}){': ' + err if err else ''}"
+    except FileNotFoundError:
+        return True, "ClamAV no está instalado en el servidor"
     except subprocess.TimeoutExpired:
         return True, "Escaneo excedió el tiempo límite"
     except Exception as e:

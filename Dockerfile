@@ -1,6 +1,7 @@
 FROM python:3-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends clamav && \
+RUN apt-get update && apt-get install -y --no-install-recommends clamav ffmpeg && \
+    freshclam --show-progress || true && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/render/project/src
