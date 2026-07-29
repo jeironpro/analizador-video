@@ -114,7 +114,7 @@ class QueueManager:
                 item["status"] = "cancelled"
                 item["error"] = "Cancelado por el usuario"
                 item["logs"].append(entry)
-        self._persist_status(temp_id, "cancelled", error="Cancelado por el usuario")
+        self._persist_status(temp_id, "cancelled", "Cancelado por el usuario", None)
         self._persist_log(temp_id, entry)
 
     def _is_cancelled(self, temp_id):
