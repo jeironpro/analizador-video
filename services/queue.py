@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import os
 import shutil
@@ -13,6 +14,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any
 
+_logger = logging.getLogger(__name__)
+
 try:
     import magic
 except ImportError:
@@ -23,7 +26,7 @@ try:
 except ImportError:
     psutil = None
 
-from video_analyzer import VideoAnalysisError, analyze_video
+from video_analyzer import VideoAnalysisError, analyze_video  # noqa: E402
 
 QueueDict = dict[str, Any]
 
@@ -360,7 +363,7 @@ class QueueManager:
                     ok, clam_msg = scan_with_clamav(tp)
                     if not ok:
                         self.log(temp_id, "clamav", "error", clam_msg)
-                        self._fail_or_retry(temp_id, f"ClamAV: {clam_msg}")
+                        self._fail_or_retry(temp_id, clam_msg)
                         return
                     self.log(temp_id, "clamav", "ok", clam_msg)
 
@@ -493,10 +496,16 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
             return True, "Archivo limpio"
         if result.returncode == 1:
             return False, f"Virus detectado: {result.stdout.strip()}"
-        return True, f"ClamAV: error ({result.returncode})"
+        stderr = result.stderr.strip()
+        details = f"código {result.returncode}"
+        if stderr:
+            details += f" - {stderr}"
+        _logger.error("ClamAV error en %s: %s", filepath, details)
+        return False, f"ClamAV: error ({details})"
     except FileNotFoundError:
         return True, "ClamAV no está instalado en el servidor"
     except subprocess.TimeoutExpired:
         return True, "Escaneo excedió el tiempo límite"
-    except Exception:
-        return True, "Escaneo no disponible"
+    except Exception as e:
+        _logger.exception("ClamAV exception al escanear %s", filepath)
+        return False, f"ClamAV: error inesperado ({e})"
