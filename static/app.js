@@ -27,6 +27,9 @@
     });
   }
 
+  const infoModal = new bootstrap.Modal('#infoModal');
+  window.mostrarInfo = function () { infoModal.show(); };
+
   // Join session modal
   const joinModal = new bootstrap.Modal('#joinModal');
   const joinInput = document.getElementById('joinCodeInput');
@@ -48,7 +51,6 @@
   const queueCard = document.getElementById('queueCard');
   const queueContainer = document.getElementById('queueContainer');
   const videoContainer = document.getElementById('videoContainer');
-  const sessionCodeEl = document.getElementById('sessionCode');
   const esMap = {};
 
   const STATUS_MAP = {
@@ -81,7 +83,12 @@
   function loadSession() {
     fetch('/api/session')
       .then(r => r.json())
-      .then(d => { if (d.code) sessionCodeEl.textContent = d.code; })
+      .then(d => {
+        if (d.code) {
+          document.getElementById('sessionCodeDesk').textContent = d.code;
+          document.getElementById('sessionCodeMob').textContent = d.code;
+        }
+      })
       .catch(() => {});
   }
 
@@ -339,7 +346,9 @@
 
   // ───────── Videos ─────────
   function renderVideos(videos) {
-    document.getElementById('videoCount').textContent = videos.length + ' video' + (videos.length !== 1 ? 's' : '');
+    const label = videos.length + ' video' + (videos.length !== 1 ? 's' : '');
+    document.getElementById('videoCountDesk').textContent = label;
+    document.getElementById('videoCountMob').textContent = label;
     if (videos.length === 0) {
       videoContainer.innerHTML = '<div class="empty-state"><i class="bi bi-film"></i><p class="mb-0">No hay videos almacenados</p></div>';
       return;

@@ -2,9 +2,12 @@ import os
 import uuid
 import json
 import time
+import signal
+import sys
 import shutil
 import secrets
 import string
+import logging
 from datetime import datetime, timezone
 
 from flask import (
@@ -19,6 +22,38 @@ from services.cleanup import CleanupDaemon
 
 app = Flask(__name__)
 
+
+# ---------------------------------------------------------------------------
+# JSON logging
+# ---------------------------------------------------------------------------
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        return json.dumps({
+            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "module": record.module,
+            "func": record.funcName,
+            "line": record.lineno,
+        }, ensure_ascii=False)
+
+
+if os.environ.get("LOG_FORMAT", "json" if os.environ.get("RENDER") else "text").lower() in ("json", "true", "1"):
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(JsonFormatter())
+    _handler.setLevel(logging.INFO)
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(_handler)
+    root.setLevel(logging.INFO)
+    app.logger.handlers.clear()
+    app.logger.propagate = False
+    app.logger.addHandler(_handler)
+    app.logger.setLevel(logging.INFO)
+    logging.getLogger("werkzeug").handlers.clear()
+    logging.getLogger("werkzeug").propagate = True
+
 database_url = os.environ.get("DATABASE_URL", "sqlite:///videos.db")
 if database_url.startswith("postgres") and "sslmode" not in database_url:
     database_url += "?sslmode=require" if "?" not in database_url else "&sslmode=require"
@@ -32,6 +67,8 @@ app.config["TEMP_FOLDER"] = os.path.join(base_dir, "temp")
 app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
 app.config["DEBUG"] = os.environ.get("RENDER") != "true"
 app.config["SESSION_DAYS"] = int(os.environ.get("SESSION_DAYS", "7"))
+app.config["ITEM_TIMEOUT"] = int(os.environ.get("ITEM_TIMEOUT", "600"))
+app.config["MAX_RETRIES"] = int(os.environ.get("MAX_RETRIES", "3"))
 
 try:
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -47,6 +84,39 @@ db.init_app(app)
 
 queue = QueueManager(app, db)
 cleanup = CleanupDaemon(app, db, days=app.config["SESSION_DAYS"])
+
+
+def _handle_sigterm(signum, frame):
+    app.logger.info("Received SIGTERM, shutting down gracefully...")
+    queue.shutdown()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+signal.signal(signal.SIGINT, _handle_sigterm)
+
+
+def _validate_config():
+    cfg = {
+        "DATABASE_URL": database_url.replace(  # mask password
+            database_url.split("@")[-1].split(":")[0] if "@" in database_url else "",
+            "****",
+        ) if "postgres" in database_url else database_url,
+        "UPLOAD_DIR": base_dir,
+        "SESSION_DAYS": app.config["SESSION_DAYS"],
+        "ITEM_TIMEOUT": app.config["ITEM_TIMEOUT"],
+        "MAX_RETRIES": app.config["MAX_RETRIES"],
+        "MAX_CONTENT_LENGTH_MB": app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024),
+        "RENDER": os.environ.get("RENDER", "false"),
+        "LOG_FORMAT": os.environ.get("LOG_FORMAT", "text"),
+        "DEBUG": app.config.get("DEBUG", False),
+    }
+    app.logger.info("Configuration: %s", json.dumps(cfg, ensure_ascii=False))
+    required = ["DATABASE_URL"]
+    missing = [k for k in required if not os.environ.get(k)]
+    if missing:
+        app.logger.warning("Variables de entorno faltantes: %s", missing)
+
 
 _db_initialized = False
 
@@ -90,12 +160,35 @@ def _init_db():
         return
     try:
         with app.app_context():
-            db.create_all()
-            _migrate_schema()
+            _run_alembic_migrations()
             _migrate_sessions()
         _db_initialized = True
     except Exception as e:
         app.logger.warning("No se pudo conectar a la base de datos: %s", e)
+        try:
+            with app.app_context():
+                db.create_all()
+                _migrate_schema()
+                _migrate_sessions()
+            _db_initialized = True
+        except Exception as e2:
+            app.logger.warning("Fallback db.create_all también falló: %s", e2)
+
+
+def _run_alembic_migrations():
+    alembic_cfg_path = os.path.join(os.path.dirname(__file__), "alembic.ini")
+    if not os.path.exists(alembic_cfg_path):
+        app.logger.info("alembic.ini no encontrado, usando db.create_all")
+        raise FileNotFoundError("alembic.ini not found")
+    try:
+        from alembic.config import Config
+        from alembic import command
+        cfg = Config(alembic_cfg_path)
+        command.upgrade(cfg, "head")
+        app.logger.info("Migraciones Alembic ejecutadas correctamente")
+    except Exception as e:
+        app.logger.warning("Error ejecutando migraciones Alembic: %s", e)
+        raise
 
 
 def _migrate_schema():
@@ -150,6 +243,7 @@ def _migrate_sessions():
 
 
 _init_db()
+_validate_config()
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +328,20 @@ def session_delete():
     resp = jsonify({"message": "Sesión eliminada"})
     resp.set_cookie("session_code", "", expires=0)
     return resp
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+@app.route("/health")
+def health():
+    ok = False
+    try:
+        db.session.execute(db.text("SELECT 1"))
+        ok = True
+    except Exception:
+        pass
+    return jsonify({"status": "ok" if ok else "db_error"}), 200 if ok else 503
 
 
 # ---------------------------------------------------------------------------

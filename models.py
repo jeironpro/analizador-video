@@ -48,3 +48,4 @@ class QueueItem(db.Model):
     result = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
     session_id = db.Column(db.String(8), nullable=False, default='LEGACY01')
+    retries = db.Column(db.Integer, default=0)

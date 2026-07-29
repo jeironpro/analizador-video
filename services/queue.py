@@ -2,6 +2,7 @@ import os
 import uuid
 import json
 import time
+import signal
 import threading
 import subprocess
 import shutil
@@ -34,6 +35,9 @@ class QueueManager:
 
         self._scheduler_running = False
         self._upload_folder = app.config["UPLOAD_FOLDER"]
+        self._item_timeout = app.config.get("ITEM_TIMEOUT", 600)
+        self._max_retries = app.config.get("MAX_RETRIES", 3)
+        self._shutdown = False
 
     # ------------------------------------------------------------------
     # Thread-safe queue operations
@@ -67,6 +71,7 @@ class QueueManager:
                 "logs": [],
                 "result": None,
                 "error": None,
+                "retries": 0,
             }
         self._save_to_db(temp_id)
 
@@ -137,6 +142,7 @@ class QueueManager:
                 session_id=session_code,
                 status="uploaded",
                 logs="[]",
+                retries=0,
             )
             self.db.session.add(qi)
             self.db.session.commit()
@@ -179,6 +185,40 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
+    def _persist_retries(self, temp_id, retries):
+        try:
+            from models import QueueItem
+            qi = self.db.session.get(QueueItem, temp_id)
+            if qi:
+                qi.retries = retries
+                self.db.session.commit()
+        except Exception:
+            self.db.session.rollback()
+
+    def _fail_or_retry(self, temp_id, error_msg):
+        retries = 0
+        with self._lock:
+            item = self._queue.get(temp_id)
+            if not item:
+                return
+            item["retries"] = item.get("retries", 0) + 1
+            retries = item["retries"]
+            if retries < self._max_retries:
+                item["error"] = error_msg
+                item["status"] = "queued"
+                self.app.logger.warning(
+                    "Item %s failed (attempt %d/%d), retrying: %s",
+                    temp_id, retries, self._max_retries, error_msg,
+                )
+            else:
+                item["status"] = "error"
+                item["error"] = error_msg
+        if retries < self._max_retries:
+            self._persist_status(temp_id, "queued", error=error_msg, result=None)
+        else:
+            self._persist_status(temp_id, "error", error=error_msg, result=None)
+        self._persist_retries(temp_id, retries)
+
     # ------------------------------------------------------------------
     # Load from DB on startup
     # ------------------------------------------------------------------
@@ -201,6 +241,7 @@ class QueueManager:
                         "logs": json.loads(qi.logs) if qi.logs else [],
                         "result": json.loads(qi.result) if qi.result else None,
                         "error": qi.error,
+                        "retries": qi.retries or 0,
                     }
         except Exception:
             self.app.logger.exception("Error loading queue from DB")
@@ -221,7 +262,7 @@ class QueueManager:
 
     def _scheduler_loop(self):
         with self.app.app_context():
-            while True:
+            while not self._shutdown:
                 self._recover_stale_processing()
                 temp_id = None
                 with self._lock:
@@ -238,6 +279,22 @@ class QueueManager:
                     self.update_status(temp_id, "processing")
                     self._executor.submit(self._process_item, temp_id)
                 time.sleep(1)
+        self._shutdown_cleanup()
+
+    def _shutdown_cleanup(self):
+        self._executor.shutdown(wait=True)
+        self.app.logger.info("Graceful shutdown: resetting processing items to queued")
+        with self._lock:
+            for qi in self._queue.values():
+                if qi["status"] == "processing":
+                    qi["status"] = "queued"
+                    qi.pop("started_at", None)
+        for qi in list(self._queue.values()):
+            if qi["status"] in ("processing",):
+                self._persist_status(qi["temp_id"], "queued")
+
+    def shutdown(self):
+        self._shutdown = True
 
     def _recover_stale_processing(self):
         try:
@@ -247,7 +304,7 @@ class QueueManager:
                     if qi["status"] == "processing":
                         if "started_at" not in qi:
                             qi["started_at"] = now
-                        elif now - qi["started_at"] > 600:
+                        elif now - qi["started_at"] > self._item_timeout:
                             self.app.logger.warning(
                                 "Recovering stale processing item %s", qi["temp_id"]
                             )
@@ -270,7 +327,7 @@ class QueueManager:
                     ok, msg = validate_file_size(tp)
                     if not ok:
                         self.log(temp_id, "size", "error", msg)
-                        self.update_status(temp_id, "error", error=msg)
+                        self._fail_or_retry(temp_id, msg)
                         return
                     self.log(temp_id, "size", "ok", msg)
 
@@ -279,7 +336,7 @@ class QueueManager:
                     ok, mime_or_msg = validate_mime_type(tp)
                     if not ok:
                         self.log(temp_id, "mime", "error", mime_or_msg)
-                        self.update_status(temp_id, "error", error=mime_or_msg)
+                        self._fail_or_retry(temp_id, mime_or_msg)
                         return
                     self.log(temp_id, "mime", "ok", mime_or_msg)
 
@@ -288,7 +345,7 @@ class QueueManager:
                     ok, clam_msg = scan_with_clamav(tp)
                     if not ok:
                         self.log(temp_id, "clamav", "error", clam_msg)
-                        self.update_status(temp_id, "error", error=f"ClamAV: {clam_msg}")
+                        self._fail_or_retry(temp_id, f"ClamAV: {clam_msg}")
                         return
                     self.log(temp_id, "clamav", "ok", clam_msg)
 
@@ -299,6 +356,7 @@ class QueueManager:
                         for err in analysis.get("errors", []):
                             self.log(temp_id, "analysis", "error", err)
                         self.update_status(temp_id, "error", error="Análisis de video fallido")
+                        self._fail_or_retry(temp_id, "Análisis de video fallido")
                         return
 
                     self.log(temp_id, "analysis", "ok", f"Contenedor: {analysis.get('container')}")
@@ -338,10 +396,10 @@ class QueueManager:
                     self.update_status(temp_id, "done", result=video.to_dict())
 
                 except VideoAnalysisError as e:
-                    self.update_status(temp_id, "error", error=f"Error de análisis: {str(e)}")
+                    self._fail_or_retry(temp_id, f"Error de análisis: {str(e)}")
                 except Exception as e:
                     self.app.logger.exception("Error en process_item %s", temp_id)
-                    self.update_status(temp_id, "error", error=f"Error interno: {str(e)}")
+                    self._fail_or_retry(temp_id, f"Error interno: {str(e)}")
                 finally:
                     item = self.get(temp_id)
                     if item and os.path.exists(item["temp_path"]):

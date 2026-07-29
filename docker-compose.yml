@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: analizador
+      POSTGRES_PASSWORD: analizador_pass
+      POSTGRES_DB: analizador
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: pg_isready -U analizador -d analizador
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  clamav:
+    image: mkodockx/docker-clamav:latest
+    ports:
+      - "3310:3310"
+    volumes:
+      - clamav_db:/var/lib/clamav
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgresql://analizador:analizador_pass@db:5432/analizador
+      UPLOAD_DIR: /data
+      SECRET_KEY: dev-secret-key-change-in-prod
+      SESSION_DAYS: "7"
+      ITEM_TIMEOUT: "600"
+      MAX_RETRIES: "3"
+      LOG_FORMAT: json
+    volumes:
+      - uploads:/data/uploads
+      - temp:/data/temp
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  uploads:
+  temp:
+  clamav_db:
