@@ -18,14 +18,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install -r requirements.txt
+      - run: pip install -r test-requirements.txt
       - name: Lint Python
-        run: |
-          python -m py_compile app.py models.py video_analyzer.py
-          python -m py_compile services/*.py
-          python -m py_compile tests/*.py
-      - name: Check JavaScript syntax
-        run: |
-          python -c "import js2py; js2py.eval_js(open('static/app.js').read())" || true
-          node -e "require('fs').readFileSync('static/app.js','utf8'); console.log('JS OK')" || echo "node not available"
-      - run: pytest tests/ -v
+        run: python -m compileall . -q
+      - name: Test
+        run: python -m pytest tests/ -v
