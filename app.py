@@ -8,6 +8,7 @@ import shutil
 import secrets
 import string
 import logging
+import threading
 from datetime import datetime, timezone
 
 from flask import (
@@ -69,6 +70,7 @@ app.config["DEBUG"] = os.environ.get("RENDER") != "true"
 app.config["SESSION_DAYS"] = int(os.environ.get("SESSION_DAYS", "7"))
 app.config["ITEM_TIMEOUT"] = int(os.environ.get("ITEM_TIMEOUT", "600"))
 app.config["MAX_RETRIES"] = int(os.environ.get("MAX_RETRIES", "3"))
+app.config["MAX_QUEUE_ITEMS"] = int(os.environ.get("MAX_QUEUE_ITEMS", "20"))
 
 try:
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -96,6 +98,42 @@ signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
 
 
+# ---------------------------------------------------------------------------
+# Rate limiter (per-session sliding window)
+# ---------------------------------------------------------------------------
+class RateLimiter:
+    def __init__(self, limit=10, window=60):
+        self.limit = limit
+        self.window = window
+        self._buckets = {}
+        self._lock = threading.Lock()
+
+    def is_allowed(self, key):
+        now = time.time()
+        with self._lock:
+            timestamps = self._buckets.get(key, [])
+            timestamps = [t for t in timestamps if now - t < self.window]
+            if len(timestamps) >= self.limit:
+                return False
+            timestamps.append(now)
+            self._buckets[key] = timestamps
+            return True
+
+    def cleanup(self):
+        now = time.time()
+        with self._lock:
+            self._buckets = {
+                k: [t for t in ts if now - t < self.window]
+                for k, ts in self._buckets.items()
+            }
+
+
+_upload_limiter = RateLimiter(
+    limit=int(os.environ.get("RATE_LIMIT_UPLOAD", "20")),
+    window=int(os.environ.get("RATE_LIMIT_WINDOW", "60")),
+)
+
+
 def _validate_config():
     cfg = {
         "DATABASE_URL": database_url.replace(  # mask password
@@ -106,6 +144,8 @@ def _validate_config():
         "SESSION_DAYS": app.config["SESSION_DAYS"],
         "ITEM_TIMEOUT": app.config["ITEM_TIMEOUT"],
         "MAX_RETRIES": app.config["MAX_RETRIES"],
+        "MAX_QUEUE_ITEMS": app.config.get("MAX_QUEUE_ITEMS", 20),
+        "RATE_LIMIT_UPLOAD": f"{_upload_limiter.limit}/{_upload_limiter.window}s",
         "MAX_CONTENT_LENGTH_MB": app.config["MAX_CONTENT_LENGTH"] // (1024 * 1024),
         "RENDER": os.environ.get("RENDER", "false"),
         "LOG_FORMAT": os.environ.get("LOG_FORMAT", "text"),
@@ -361,6 +401,17 @@ def upload():
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
+
+    # Rate limit
+    if not _upload_limiter.is_allowed(code):
+        return jsonify({"error": "Demasiadas solicitudes. Espera un momento antes de subir más archivos."}), 429
+
+    # Queue item limit
+    max_items = app.config["MAX_QUEUE_ITEMS"]
+    current = queue.count_items(code)
+    if current >= max_items:
+        return jsonify({"error": f"Límite de {max_items} archivos en cola alcanzado. Procesá o eliminá algunos antes de subir más."}), 429
+
     if "video" not in request.files:
         return jsonify({"error": "No se envió ningún archivo"}), 400
     file = request.files["video"]
@@ -370,11 +421,19 @@ def upload():
     video_exts = {".mp4", ".webm", ".mkv", ".avi", ".mov", ".mpeg", ".wmv"}
     if ext not in video_exts:
         return jsonify({"error": f"Extensión no permitida: {ext}"}), 400
+
     temp_id = str(uuid.uuid4())
     safe_name = secure_filename(file.filename) or f"video{ext}"
     temp_filename = f"{temp_id}_{safe_name}"
     temp_path = os.path.join(app.config["TEMP_FOLDER"], temp_filename)
     file.save(temp_path)
+
+    # Real MIME validation (server-side)
+    ok, mime_or_msg = validate_mime_type(temp_path)
+    if not ok:
+        os.remove(temp_path)
+        return jsonify({"error": mime_or_msg}), 400
+
     queue.add(temp_id, temp_path, temp_filename, safe_name, ext, code)
     return jsonify({"temp_id": temp_id, "original_name": safe_name, "temp_filename": temp_filename}), 201
 

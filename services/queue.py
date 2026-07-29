@@ -58,6 +58,10 @@ class QueueManager:
                 if session_code is None or qi.get("session_code") == session_code
             ]
 
+    def count_items(self, session_code):
+        with self._lock:
+            return sum(1 for qi in self._queue.values() if qi.get("session_code") == session_code)
+
     def add(self, temp_id, temp_path, temp_filename, original_name, ext, session_code):
         with self._lock:
             self._queue[temp_id] = {
