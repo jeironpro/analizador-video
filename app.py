@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import uuid
 import json
@@ -10,10 +12,11 @@ import string
 import logging
 import threading
 from datetime import datetime, timezone
+from typing import Any, Optional
 
 from flask import (
     Flask, request, render_template, jsonify, send_file, Response,
-    stream_with_context, redirect, make_response
+    stream_with_context, redirect, make_response,
 )
 from werkzeug.utils import secure_filename
 
@@ -28,7 +31,7 @@ app = Flask(__name__)
 # JSON logging
 # ---------------------------------------------------------------------------
 class JsonFormatter(logging.Formatter):
-    def format(self, record):
+    def format(self, record: logging.LogRecord) -> str:
         return json.dumps({
             "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
@@ -88,7 +91,7 @@ queue = QueueManager(app, db)
 cleanup = CleanupDaemon(app, db, days=app.config["SESSION_DAYS"])
 
 
-def _handle_sigterm(signum, frame):
+def _handle_sigterm(signum: int, frame: Any) -> None:
     app.logger.info("Received SIGTERM, shutting down gracefully...")
     queue.shutdown()
     sys.exit(0)
@@ -102,13 +105,13 @@ signal.signal(signal.SIGINT, _handle_sigterm)
 # Rate limiter (per-session sliding window)
 # ---------------------------------------------------------------------------
 class RateLimiter:
-    def __init__(self, limit=10, window=60):
+    def __init__(self, limit: int = 10, window: int = 60) -> None:
         self.limit = limit
         self.window = window
-        self._buckets = {}
+        self._buckets: dict[str, list[float]] = {}
         self._lock = threading.Lock()
 
-    def is_allowed(self, key):
+    def is_allowed(self, key: str) -> bool:
         now = time.time()
         with self._lock:
             timestamps = self._buckets.get(key, [])
@@ -119,7 +122,7 @@ class RateLimiter:
             self._buckets[key] = timestamps
             return True
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         now = time.time()
         with self._lock:
             self._buckets = {
@@ -134,12 +137,14 @@ _upload_limiter = RateLimiter(
 )
 
 
-def _validate_config():
+def _validate_config() -> None:
     cfg = {
-        "DATABASE_URL": database_url.replace(  # mask password
-            database_url.split("@")[-1].split(":")[0] if "@" in database_url else "",
-            "****",
-        ) if "postgres" in database_url else database_url,
+        "DATABASE_URL": (
+            database_url.replace(
+                database_url.split("@")[-1].split(":")[0] if "@" in database_url else "",
+                "****",
+            ) if "postgres" in database_url else database_url
+        ),
         "UPLOAD_DIR": base_dir,
         "SESSION_DAYS": app.config["SESSION_DAYS"],
         "ITEM_TIMEOUT": app.config["ITEM_TIMEOUT"],
@@ -163,11 +168,11 @@ _db_initialized = False
 SESSION_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
-def _generate_session_code(length=8):
+def _generate_session_code(length: int = 8) -> str:
     return ''.join(secrets.choice(SESSION_CODE_ALPHABET) for _ in range(length))
 
 
-def _create_session():
+def _create_session() -> str:
     while True:
         code = _generate_session_code()
         if not db.session.get(Session, code):
@@ -178,11 +183,11 @@ def _create_session():
     return code
 
 
-def _get_session_code():
+def _get_session_code() -> Optional[str]:
     return request.cookies.get("session_code")
 
 
-def _session_required():
+def _session_required() -> Optional[str]:
     code = _get_session_code()
     if not code:
         return None
@@ -194,7 +199,7 @@ def _session_required():
     return None
 
 
-def _init_db():
+def _init_db() -> None:
     global _db_initialized
     if _db_initialized:
         return
@@ -215,7 +220,7 @@ def _init_db():
             app.logger.warning("Fallback db.create_all también falló: %s", e2)
 
 
-def _run_alembic_migrations():
+def _run_alembic_migrations() -> None:
     alembic_cfg_path = os.path.join(os.path.dirname(__file__), "alembic.ini")
     if not os.path.exists(alembic_cfg_path):
         app.logger.info("alembic.ini no encontrado, usando db.create_all")
@@ -231,7 +236,7 @@ def _run_alembic_migrations():
         raise
 
 
-def _migrate_schema():
+def _migrate_schema() -> None:
     engine = db.engine
     inspector = db.inspect(engine)
     if inspector.has_table("video"):
@@ -264,7 +269,7 @@ def _migrate_schema():
                 pass
 
 
-def _migrate_sessions():
+def _migrate_sessions() -> None:
     from models import QueueItem
     has_legacy = db.session.query(Video).filter(Video.session_id == None).count() > 0
     if not has_legacy:
@@ -289,15 +294,15 @@ _validate_config()
 # ---------------------------------------------------------------------------
 # SSE helpers
 # ---------------------------------------------------------------------------
-def _sse_step(step, status, message):
+def _sse_step(step: str, status: str, message: str) -> str:
     return f"event: step\ndata: {json.dumps({'step': step, 'status': status, 'message': message})}\n\n"
 
 
-def _sse_complete(data):
+def _sse_complete(data: Any) -> str:
     return f"event: complete\ndata: {json.dumps(data)}\n\n"
 
 
-def _sse_error(message):
+def _sse_error(message: str) -> str:
     return f"event: error\ndata: {json.dumps({'message': message})}\n\n"
 
 
@@ -305,7 +310,7 @@ def _sse_error(message):
 # Session routes
 # ---------------------------------------------------------------------------
 @app.route("/")
-def index():
+def index() -> Response:
     code = _get_session_code()
     if code:
         sess = db.session.get(Session, code)
@@ -320,7 +325,7 @@ def index():
 
 
 @app.route("/s/<code>/")
-def session_view(code):
+def session_view(code: str) -> Response:
     if len(code) != 8 or not all(c in SESSION_CODE_ALPHABET for c in code):
         return redirect("/")
     sess = db.session.get(Session, code)
@@ -335,15 +340,15 @@ def session_view(code):
 
 
 @app.route("/api/session")
-def session_info():
+def session_info() -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
-    return jsonify({"code": code})
+    return jsonify({"code": code}), 200
 
 
 @app.route("/api/session/delete", methods=["POST"])
-def session_delete():
+def session_delete() -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
@@ -367,14 +372,14 @@ def session_delete():
             pass
     resp = jsonify({"message": "Sesión eliminada"})
     resp.set_cookie("session_code", "", expires=0)
-    return resp
+    return resp, 200
 
 
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------
 @app.route("/health")
-def health():
+def health() -> tuple[Response, int]:
     ok = False
     try:
         db.session.execute(db.text("SELECT 1"))
@@ -388,25 +393,23 @@ def health():
 # API routes (all require valid session)
 # ---------------------------------------------------------------------------
 @app.route("/api/videos", methods=["GET"])
-def list_videos():
+def list_videos() -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
     videos = Video.query.filter_by(session_id=code).order_by(Video.uploaded_at.desc()).all()
-    return jsonify([v.to_dict() for v in videos])
+    return jsonify([v.to_dict() for v in videos]), 200
 
 
 @app.route("/api/upload", methods=["POST"])
-def upload():
+def upload() -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
 
-    # Rate limit
     if not _upload_limiter.is_allowed(code):
         return jsonify({"error": "Demasiadas solicitudes. Espera un momento antes de subir más archivos."}), 429
 
-    # Queue item limit
     max_items = app.config["MAX_QUEUE_ITEMS"]
     current = queue.count_items(code)
     if current >= max_items:
@@ -428,7 +431,6 @@ def upload():
     temp_path = os.path.join(app.config["TEMP_FOLDER"], temp_filename)
     file.save(temp_path)
 
-    # Real MIME validation (server-side)
     ok, mime_or_msg = validate_mime_type(temp_path)
     if not ok:
         os.remove(temp_path)
@@ -439,15 +441,15 @@ def upload():
 
 
 @app.route("/api/queue")
-def list_queue():
+def list_queue() -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
-    return jsonify(queue.list_items(session_code=code))
+    return jsonify(queue.list_items(session_code=code)), 200
 
 
 @app.route("/api/queue/events")
-def queue_events():
+def queue_events() -> Response:
     def generate():
         last_state = None
         while True:
@@ -472,7 +474,7 @@ def queue_events():
 
 
 @app.route("/api/queue/<temp_id>/process", methods=["POST"])
-def queue_process(temp_id):
+def queue_process(temp_id: str) -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
@@ -489,7 +491,7 @@ def queue_process(temp_id):
 
 
 @app.route("/api/queue/<temp_id>/stream")
-def queue_stream(temp_id):
+def queue_stream(temp_id: str) -> Response:
     def generate():
         last_count = 0
         while True:
@@ -517,7 +519,7 @@ def queue_stream(temp_id):
 
 
 @app.route("/api/queue/<temp_id>", methods=["DELETE"])
-def queue_remove(temp_id):
+def queue_remove(temp_id: str) -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
@@ -533,7 +535,7 @@ def queue_remove(temp_id):
 
 
 @app.route("/api/queue/<temp_id>/cancel", methods=["POST"])
-def queue_cancel(temp_id):
+def queue_cancel(temp_id: str) -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
@@ -549,7 +551,7 @@ def queue_cancel(temp_id):
 
 
 @app.route("/api/download/<video_id>", methods=["GET"])
-def download(video_id):
+def download(video_id: str) -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
@@ -566,11 +568,11 @@ def download(video_id):
         mimetype=video.mime_type or "application/octet-stream",
         as_attachment=True,
         download_name=video.original_name,
-    )
+    ), 200
 
 
 @app.route("/api/delete/<video_id>", methods=["DELETE"])
-def delete(video_id):
+def delete(video_id: str) -> tuple[Response, int]:
     code = _session_required()
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
@@ -591,11 +593,12 @@ def delete(video_id):
 # Error pages
 # ---------------------------------------------------------------------------
 @app.errorhandler(404)
-def not_found(e):
+def not_found(e: Any) -> tuple[str, int]:
     return render_template("404.html"), 404
 
+
 @app.errorhandler(500)
-def server_error(e):
+def server_error(e: Any) -> tuple[str, int]:
     return render_template("500.html"), 500
 
 

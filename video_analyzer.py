@@ -1,18 +1,20 @@
+from __future__ import annotations
+
 import json
 import subprocess
-import struct
 from datetime import datetime, timezone
+from typing import Any
 
 
-ALLOWED_VIDEO_CODECS = {"h264", "hevc", "vp9", "av1", "mpeg4", "png", "prores", "dnxhd", "mpeg2video"}
-ALLOWED_AUDIO_CODECS = {"aac", "mp3", "opus", "vorbis", "pcm_s16le"}
-ALLOWED_CONTAINERS = {"mp4", "webm", "mkv", "avi", "mov"}
-MAX_RESOLUTION = (7680, 4320)
-MIN_RESOLUTION = (16, 16)
-MAX_FRAME_RATE = 120
-MIN_FRAME_RATE = 1
-MAX_DURATION_SECONDS = 86400
-CONTAINER_CODEC_MAP = {
+ALLOWED_VIDEO_CODECS: set[str] = {"h264", "hevc", "vp9", "av1", "mpeg4", "png", "prores", "dnxhd", "mpeg2video"}
+ALLOWED_AUDIO_CODECS: set[str] = {"aac", "mp3", "opus", "vorbis", "pcm_s16le"}
+ALLOWED_CONTAINERS: set[str] = {"mp4", "webm", "mkv", "avi", "mov"}
+MAX_RESOLUTION: tuple[int, int] = (7680, 4320)
+MIN_RESOLUTION: tuple[int, int] = (16, 16)
+MAX_FRAME_RATE: int = 120
+MIN_FRAME_RATE: int = 1
+MAX_DURATION_SECONDS: int = 86400
+CONTAINER_CODEC_MAP: dict[str, set[str]] = {
     "mp4":  {"h264", "hevc", "aac", "mp3", "png", "prores", "mpeg2video"},
     "webm": {"vp9", "vp8", "opus", "vorbis"},
     "mkv":  {"h264", "hevc", "vp9", "av1", "aac", "opus", "vorbis", "mp3"},
@@ -30,32 +32,32 @@ def _get_container_format(filepath: str) -> str:
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
         "-show_format",
-        filepath
+        filepath,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise VideoAnalysisError("ffprobe no pudo leer el archivo")
-    data = json.loads(result.stdout)
+    data: dict[str, Any] = json.loads(result.stdout)
     format_name = data.get("format", {}).get("format_name", "")
     return format_name.split(",")[0].lower()
 
 
-def _get_streams(filepath: str) -> list:
+def _get_streams(filepath: str) -> list[dict[str, Any]]:
     cmd = [
         "ffprobe", "-v", "quiet",
         "-print_format", "json",
         "-show_streams",
         "-show_format",
-        filepath
+        filepath,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise VideoAnalysisError("ffprobe no pudo leer el archivo")
-    data = json.loads(result.stdout)
+    data: dict[str, Any] = json.loads(result.stdout)
     return data.get("streams", [])
 
 
-def analyze_video(filepath: str) -> dict:
+def analyze_video(filepath: str) -> dict[str, Any]:
     streams = _get_streams(filepath)
     if not streams:
         raise VideoAnalysisError("El archivo no contiene streams de medios")
@@ -68,9 +70,9 @@ def analyze_video(filepath: str) -> dict:
     if not video_streams:
         raise VideoAnalysisError("El archivo no contiene un stream de video")
 
-    errors = []
-    stream_details = []
-    all_codecs = set()
+    errors: list[str] = []
+    stream_details: list[dict[str, Any]] = []
+    all_codecs: set[str] = set()
 
     for vs in video_streams:
         codec = vs.get("codec_name", "").lower()
@@ -137,22 +139,9 @@ def analyze_video(filepath: str) -> dict:
             "bitrate": a_stream.get("bitrate", "N/A"),
         })
 
-    format_info = None
-    for s in streams:
-        if "TAG" in s:
-            tags = s.get("TAG", {})
-            creation_time = tags.get("creation_time")
-            if creation_time:
-                try:
-                    parsed = datetime.fromisoformat(creation_time.replace("Z", "+00:00"))
-                    if parsed > datetime.now(timezone.utc):
-                        errors.append("Metadato 'creation_time' está en el futuro")
-                except (ValueError, TypeError):
-                    pass
-
-    suspicious_keys = {"encoder", "encoder-version", "software"}
     for s in streams:
         tags = s.get("tags", {})
+        suspicious_keys = {"encoder", "encoder-version", "software"}
         for key in tags:
             key_lower = key.lower()
             if any(sus in key_lower for sus in suspicious_keys):

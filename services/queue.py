@@ -1,8 +1,9 @@
+from __future__ import annotations
+
 import os
 import uuid
 import json
 import time
-import signal
 import threading
 import subprocess
 import shutil
@@ -10,6 +11,7 @@ import mimetypes
 from datetime import datetime, timezone
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 try:
     import magic
@@ -24,29 +26,31 @@ except ImportError:
 from video_analyzer import analyze_video, VideoAnalysisError
 
 
+QueueDict = dict[str, Any]
+
+
 class QueueManager:
-    def __init__(self, app, db):
+    def __init__(self, app: Any, db: Any) -> None:
         self.app = app
         self.db = db
-        self._queue = OrderedDict()
+        self._queue: OrderedDict[str, QueueDict] = OrderedDict()
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1)
 
-
         self._scheduler_running = False
-        self._upload_folder = app.config["UPLOAD_FOLDER"]
-        self._item_timeout = app.config.get("ITEM_TIMEOUT", 600)
-        self._max_retries = app.config.get("MAX_RETRIES", 3)
+        self._upload_folder: str = app.config["UPLOAD_FOLDER"]
+        self._item_timeout: int = app.config.get("ITEM_TIMEOUT", 600)
+        self._max_retries: int = app.config.get("MAX_RETRIES", 3)
         self._shutdown = False
 
     # ------------------------------------------------------------------
     # Thread-safe queue operations
     # ------------------------------------------------------------------
-    def get(self, temp_id):
+    def get(self, temp_id: str) -> QueueDict | None:
         with self._lock:
             return self._queue.get(temp_id)
 
-    def list_items(self, session_code=None):
+    def list_items(self, session_code: str | None = None) -> list[dict[str, str]]:
         with self._lock:
             return [
                 {
@@ -58,11 +62,11 @@ class QueueManager:
                 if session_code is None or qi.get("session_code") == session_code
             ]
 
-    def count_items(self, session_code):
+    def count_items(self, session_code: str) -> int:
         with self._lock:
             return sum(1 for qi in self._queue.values() if qi.get("session_code") == session_code)
 
-    def add(self, temp_id, temp_path, temp_filename, original_name, ext, session_code):
+    def add(self, temp_id: str, temp_path: str, temp_filename: str, original_name: str, ext: str, session_code: str) -> None:
         with self._lock:
             self._queue[temp_id] = {
                 "temp_id": temp_id,
@@ -79,7 +83,7 @@ class QueueManager:
             }
         self._save_to_db(temp_id)
 
-    def log(self, temp_id, step, status, message):
+    def log(self, temp_id: str, step: str, status: str, message: str) -> None:
         entry = {"step": step, "status": status, "message": message}
         with self._lock:
             item = self._queue.get(temp_id)
@@ -87,7 +91,7 @@ class QueueManager:
                 item["logs"].append(entry)
         self._persist_log(temp_id, entry)
 
-    def update_status(self, temp_id, status, error=None, result=None):
+    def update_status(self, temp_id: str, status: str, error: str | None = None, result: dict | None = None) -> None:
         with self._lock:
             item = self._queue.get(temp_id)
             if item:
@@ -98,7 +102,7 @@ class QueueManager:
                     item["result"] = result
         self._persist_status(temp_id, status, error, result)
 
-    def remove(self, temp_id):
+    def remove(self, temp_id: str) -> None:
         item = None
         with self._lock:
             item = self._queue.pop(temp_id, None)
@@ -106,7 +110,7 @@ class QueueManager:
             os.remove(item["temp_path"])
         self._delete_from_db(temp_id)
 
-    def cancel(self, temp_id):
+    def cancel(self, temp_id: str) -> None:
         entry = {"step": "cancel", "status": "error", "message": "Procesamiento cancelado por el usuario"}
         with self._lock:
             item = self._queue.get(temp_id)
@@ -117,7 +121,7 @@ class QueueManager:
         self._persist_status(temp_id, "cancelled", "Cancelado por el usuario", None)
         self._persist_log(temp_id, entry)
 
-    def _is_cancelled(self, temp_id):
+    def _is_cancelled(self, temp_id: str) -> bool:
         with self._lock:
             item = self._queue.get(temp_id)
             return item is None or item["status"] != "processing"
@@ -125,7 +129,7 @@ class QueueManager:
     # ------------------------------------------------------------------
     # DB persistence helpers
     # ------------------------------------------------------------------
-    def _save_to_db(self, temp_id):
+    def _save_to_db(self, temp_id: str) -> None:
         with self._lock:
             item = self._queue.get(temp_id)
             if not item:
@@ -153,7 +157,7 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _persist_log(self, temp_id, entry):
+    def _persist_log(self, temp_id: str, entry: dict) -> None:
         try:
             from models import QueueItem
             qi = self.db.session.get(QueueItem, temp_id)
@@ -165,7 +169,7 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _persist_status(self, temp_id, status, error, result):
+    def _persist_status(self, temp_id: str, status: str, error: str | None, result: dict | None) -> None:
         try:
             from models import QueueItem
             qi = self.db.session.get(QueueItem, temp_id)
@@ -179,7 +183,7 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _delete_from_db(self, temp_id):
+    def _delete_from_db(self, temp_id: str) -> None:
         try:
             from models import QueueItem
             qi = self.db.session.get(QueueItem, temp_id)
@@ -189,7 +193,7 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _persist_retries(self, temp_id, retries):
+    def _persist_retries(self, temp_id: str, retries: int) -> None:
         try:
             from models import QueueItem
             qi = self.db.session.get(QueueItem, temp_id)
@@ -199,7 +203,7 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _fail_or_retry(self, temp_id, error_msg):
+    def _fail_or_retry(self, temp_id: str, error_msg: str) -> None:
         retries = 0
         with self._lock:
             item = self._queue.get(temp_id)
@@ -226,7 +230,7 @@ class QueueManager:
     # ------------------------------------------------------------------
     # Load from DB on startup
     # ------------------------------------------------------------------
-    def load_from_db(self):
+    def load_from_db(self) -> None:
         try:
             from models import QueueItem
             items = QueueItem.query.filter(
@@ -253,7 +257,7 @@ class QueueManager:
     # ------------------------------------------------------------------
     # Scheduler and worker
     # ------------------------------------------------------------------
-    def start_scheduler(self):
+    def start_scheduler(self) -> None:
         if self._scheduler_running:
             return
         self._scheduler_running = True
@@ -264,7 +268,7 @@ class QueueManager:
         t = threading.Thread(target=self._scheduler_loop, daemon=True)
         t.start()
 
-    def _scheduler_loop(self):
+    def _scheduler_loop(self) -> None:
         with self.app.app_context():
             while not self._shutdown:
                 self._recover_stale_processing()
@@ -285,7 +289,7 @@ class QueueManager:
                 time.sleep(1)
         self._shutdown_cleanup()
 
-    def _shutdown_cleanup(self):
+    def _shutdown_cleanup(self) -> None:
         self._executor.shutdown(wait=True)
         self.app.logger.info("Graceful shutdown: resetting processing items to queued")
         with self._lock:
@@ -297,10 +301,10 @@ class QueueManager:
             if qi["status"] in ("processing",):
                 self._persist_status(qi["temp_id"], "queued")
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         self._shutdown = True
 
-    def _recover_stale_processing(self):
+    def _recover_stale_processing(self) -> None:
         try:
             with self._lock:
                 now = time.time()
@@ -317,7 +321,7 @@ class QueueManager:
         except Exception:
             pass
 
-    def _process_item(self, temp_id):
+    def _process_item(self, temp_id: str) -> None:
         try:
             with self.app.app_context():
                 try:

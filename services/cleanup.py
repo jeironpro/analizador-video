@@ -1,21 +1,24 @@
+from __future__ import annotations
+
 import os
 import shutil
 import time
 import threading
 from datetime import datetime, timezone, timedelta
+from typing import Any
 
 
 class CleanupDaemon:
-    def __init__(self, app, db, days=7):
+    def __init__(self, app: Any, db: Any, days: int = 7) -> None:
         self.app = app
         self.db = db
         self.days = days
 
-    def start(self):
+    def start(self) -> None:
         t = threading.Thread(target=self._loop, daemon=True)
         t.start()
 
-    def _loop(self):
+    def _loop(self) -> None:
         while True:
             time.sleep(3600)
             try:
@@ -23,7 +26,7 @@ class CleanupDaemon:
             except Exception:
                 pass
 
-    def _cleanup(self):
+    def _cleanup(self) -> None:
         from models import Session
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.days)
