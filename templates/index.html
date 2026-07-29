@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Analizador de Video</title>
+  <title>VidScan</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.5/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
@@ -14,10 +14,10 @@
 <nav class="navbar navbar-custom">
   <div class="container d-flex justify-content-between align-items-center">
 
-    <span class="navbar-brand mb-0 d-flex align-items-center gap-2 fw-semibold text-dark">
-      <i class="bi bi-camera-reels" style="color:#e94560;font-size:1.3rem"></i>
-      Analizador de Video
-    </span>
+      <span class="navbar-brand mb-0 d-flex align-items-center gap-2 fw-semibold text-dark">
+        <i class="bi bi-camera-reels" style="color:#e94560;font-size:1.3rem"></i>
+        VidScan
+      </span>
 
     <!-- Desktop (≥576px) -->
     <div class="d-none d-sm-flex align-items-center gap-2">
@@ -89,24 +89,24 @@
     </div>
 
     <!-- Queue -->
-    <div class="card-custom mt-4 d-flex flex-column d-none flex-shrink-0" id="queueCard" style="max-height: 35vh;">
-      <div class="card-header-custom d-flex justify-content-between align-items-center flex-shrink-0">
+    <div class="card-custom mt-4 d-none" id="queueCard">
+      <div class="card-header-custom d-flex justify-content-between align-items-center">
         <h5 class="mb-0 d-flex align-items-center gap-2">
           <i class="bi bi-list-task text-warning"></i> Cola de Procesamiento
         </h5>
         <span class="badge bg-warning bg-opacity-25 text-warning px-3 py-2" id="queueCount">0</span>
       </div>
-      <div class="p-3 overflow-y-auto min-h-0" id="queueContainer"></div>
+      <div class="p-3" id="queueContainer"></div>
     </div>
 
     <!-- Videos -->
-    <div class="card-custom mt-4 d-flex flex-column flex-grow-1 min-h-0">
-      <div class="card-header-custom flex-shrink-0">
+    <div class="card-custom mt-4">
+      <div class="card-header-custom">
         <h5 class="mb-0 d-flex align-items-center gap-2">
           <i class="bi bi-film text-success"></i> Videos Almacenados
         </h5>
       </div>
-      <div class="p-3 overflow-y-auto flex-grow-1 min-h-0">
+      <div class="p-3">
         <div class="video-grid" id="videoContainer">
           <div class="empty-state">
             <i class="bi bi-film"></i>
@@ -121,7 +121,7 @@
 
 <footer class="footer-custom">
   <div class="container text-center">
-    <p class="small mb-0">&copy; 2026 Analizador de video - Todos los derechos reservados.</p>
+    <p class="small mb-0">&copy; 2026 VidScan - Todos los derechos reservados.</p>
   </div>
 </footer>
 
@@ -134,7 +134,7 @@
         <button class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <p><strong>Analizador de Video</strong> permite subir archivos de video, escanearlos con ClamAV y analizar sus metadatos y codecs mediante ffprobe.</p>
+        <p><strong>VidScan</strong> permite subir archivos de video, escanearlos con ClamAV y analizar sus metadatos y codecs mediante ffprobe.</p>
         <h6 class="fw-semibold mt-3">Flujo</h6>
         <ol class="small mb-0">
           <li>Subí uno o más videos (50–500 MB cada uno, formatos: MP4, WebM, MKV, AVI, MOV, MPEG, WMV).</li>
@@ -144,6 +144,7 @@
         </ol>
         <h6 class="fw-semibold mt-3">Sesiones</h6>
         <p class="small mb-0">Cada navegador genera una sesión anónima identificada por un código de 8 caracteres. Podés compartir el enlace para que otras personas vean los mismos videos. Las sesiones expiran tras 7 días de inactividad.</p>
+        <p class="small mb-0 mt-2"><i class="bi bi-hdd"></i> El almacenamiento total disponible es de 5 GB.</p>
       </div>
     </div>
   </div>

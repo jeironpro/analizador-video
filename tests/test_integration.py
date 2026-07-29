@@ -84,7 +84,7 @@ class TestSession:
     def test_session_page_renders(self, client, session_code):
         r = client.get(f"/s/{session_code}/")
         assert r.status_code == 200
-        assert "Analizador" in r.get_data(as_text=True)
+        assert "VidScan" in r.get_data(as_text=True)
 
     def test_session_api(self, client, session_code):
         r = client.get("/api/session")

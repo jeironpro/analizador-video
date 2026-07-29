@@ -1,6 +1,6 @@
-# Analizador de Video
+# VidScan
 
-Aplicación web para analizar, validar y almacenar archivos de video. Escanea con ClamAV, verifica codecs y metadatos mediante ffprobe, y persiste los resultados en PostgreSQL.
+Aplicación web para escanear, validar y almacenar archivos de video. Utiliza ClamAV para antivirus y ffprobe para análisis de codecs y metadatos, con persistencia en PostgreSQL.
 
 ## Stack
 

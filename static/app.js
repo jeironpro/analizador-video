@@ -184,7 +184,7 @@
     });
   }
 
-  function handleFiles(files) {
+  async function handleFiles(files) {
     const valid = [];
     for (const f of files) {
       if (f.size < MIN_FILE_SIZE) {
@@ -202,30 +202,24 @@
     progressBar.classList.remove('d-none');
     progressFill.style.width = '0%';
 
-    let done = 0;
-    valid.forEach((file, i) => {
-      uploadWithRetry(file)
-        .then(() => {
-          done++;
-          if (done === valid.length) {
-            setTimeout(() => {
-              progressBar.classList.add('d-none');
-              progressFill.style.width = '0%';
-            }, 300);
-            showToast(valid.length + ' archivo' + (valid.length !== 1 ? 's' : '') + ' subido' + (valid.length !== 1 ? 's' : '') + ' correctamente', 'success');
-            loadQueue();
-          }
-        })
-        .catch(() => {
-          done++;
-          if (done === valid.length) {
-            setTimeout(() => {
-              progressBar.classList.add('d-none');
-              progressFill.style.width = '0%';
-            }, 300);
-          }
-        });
-    });
+    let ok = 0, err = 0;
+    for (const file of valid) {
+      progressFill.style.width = '0%';
+      try {
+        await uploadWithRetry(file);
+        ok++;
+      } catch (_) {
+        err++;
+      }
+    }
+    setTimeout(() => {
+      progressBar.classList.add('d-none');
+      progressFill.style.width = '0%';
+    }, 300);
+    if (ok > 0) {
+      showToast(ok + ' archivo' + (ok !== 1 ? 's' : '') + ' subido' + (ok !== 1 ? 's' : '') + ' correctamente', 'success');
+      loadQueue();
+    }
   }
 
   // ───────── Queue ─────────
@@ -378,6 +372,7 @@
   }
 
   function renderQueue(items) {
+    queueContainer.querySelectorAll('.skeleton-queue').forEach(el => el.remove());
     const existingIds = new Set(items.map(i => i.temp_id));
     let activeCount = 0;
 
