@@ -380,6 +380,11 @@ class QueueManager:
                         return
                     tp = item["temp_path"]
 
+                    if not os.path.exists(tp):
+                        self.log(temp_id, "size", "error", "Archivo temporal no encontrado")
+                        self.update_status(temp_id, "error", error="Archivo temporal no encontrado")
+                        return
+
                     self.log(temp_id, "size", "checking", "Validando tamaño...")
                     if self._is_cancelled(temp_id):
                         return
@@ -542,11 +547,9 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
         if result.returncode < 0:
             return True, "Escaneo omitido por límite de memoria"
         stderr = result.stderr.strip()
-        details = f"código {result.returncode}"
         if stderr:
-            details += f" - {stderr}"
-        _logger.error("ClamAV error en %s: %s", filepath, details)
-        return True, f"ClamAV: error ({details})"
+            _logger.error("ClamAV error en %s (código %s): %s", filepath, result.returncode, stderr)
+        return True, f"ClamAV no disponible (código {result.returncode})"
     except FileNotFoundError:
         return True, "ClamAV no está instalado en el servidor"
     except subprocess.TimeoutExpired:
