@@ -116,7 +116,7 @@ class TestScanWithClamav:
     def test_clamav_not_found(self, mock_run, temp_file):
         mock_run.side_effect = FileNotFoundError
         ok, msg = scan_with_clamav(temp_file)
-        assert ok
+        assert not ok
         assert "no está instalado" in msg
 
     @patch("services.queue.subprocess.run")
@@ -125,13 +125,23 @@ class TestScanWithClamav:
 
         mock_run.side_effect = TimeoutExpired("clamscan", 300)
         ok, msg = scan_with_clamav(temp_file)
-        assert ok
+        assert not ok
         assert "excedió" in msg
 
     @patch("services.queue.subprocess.run")
-    def test_killed_by_memory_limit(self, mock_run, temp_file):
+    def test_killed_by_rlimit_memory(self, mock_run, temp_file):
         mock_result = MagicMock()
         mock_result.returncode = -9
+        mock_run.return_value = mock_result
+        ok, msg = scan_with_clamav(temp_file)
+        assert ok
+        assert "límite de memoria" in msg
+
+    @patch("services.queue.subprocess.run")
+    def test_returncode_2_memory(self, mock_run, temp_file):
+        mock_result = MagicMock()
+        mock_result.returncode = 2
+        mock_result.stderr.strip.return_value = ""
         mock_run.return_value = mock_result
         ok, msg = scan_with_clamav(temp_file)
         assert ok

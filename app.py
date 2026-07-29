@@ -584,8 +584,6 @@ def download(video_id: str) -> tuple[Response, int]:
         return jsonify({"error": "Video no encontrado"}), 404
     if video.session_id != code:
         return jsonify({"error": "Video no pertenece a esta sesión"}), 403
-    if video.clamav_result != "Archivo limpio":
-        return jsonify({"error": "No se puede descargar un archivo que no pasó la verificación antivirus"}), 403
     filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.session_id, video.filename)
     if not os.path.exists(filepath):
         return jsonify({"error": "Archivo no encontrado en el servidor"}), 404

@@ -544,16 +544,16 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
             return True, "Archivo limpio"
         if result.returncode == 1:
             return False, f"Virus detectado: {result.stdout.strip()}"
-        if result.returncode < 0:
+        if result.returncode < 0 or result.returncode == 2:
             return True, "Escaneo omitido por límite de memoria"
         stderr = result.stderr.strip()
         if stderr:
             _logger.error("ClamAV error en %s (código %s): %s", filepath, result.returncode, stderr)
-        return True, f"ClamAV no disponible (código {result.returncode})"
+        return False, f"ClamAV: error interno (código {result.returncode})"
     except FileNotFoundError:
-        return True, "ClamAV no está instalado en el servidor"
+        return False, "ClamAV no está instalado en el servidor"
     except subprocess.TimeoutExpired:
-        return True, "Escaneo excedió el tiempo límite"
+        return False, "Escaneo excedió el tiempo límite"
     except Exception as e:
         _logger.exception("ClamAV exception al escanear %s", filepath)
-        return True, f"ClamAV: error inesperado ({e})"
+        return False, f"ClamAV: error inesperado ({e})"

@@ -425,14 +425,6 @@
       .catch(() => {});
   }
 
-  function scanBadge(result) {
-    if (!result || result === 'Archivo limpio') return '';
-    if (result.indexOf('Virus detectado') !== -1) {
-      return '<span class="badge bg-danger flex-shrink-0" title="' + escapeHtml(result) + '"><i class="bi bi-bug"></i> Virus</span>';
-    }
-    return '<span class="badge bg-warning text-dark flex-shrink-0" title="' + escapeHtml(result) + '"><i class="bi bi-shield-exclamation"></i> No escaneado</span>';
-  }
-
   // ───────── Videos ─────────
   function renderVideos(videos) {
     const label = videos.length + ' video' + (videos.length !== 1 ? 's' : '');
@@ -446,10 +438,6 @@
     videos.forEach(v => {
       const ext = v.container || '?';
       const icon = iconForExt(ext);
-      const isClean = !v.clamav_result || v.clamav_result === 'Archivo limpio';
-      const downloadBtn = isClean
-        ? '<a href="/api/download/' + v.id + '" class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i> Descargar</a>'
-        : '<button class="btn btn-sm btn-outline-secondary" disabled title="No pasó la verificación antivirus"><i class="bi bi-download"></i> Descargar</button>';
       html += `
         <div class="video-card p-3">
           <div class="d-flex justify-content-between align-items-start mb-2">
@@ -457,17 +445,14 @@
               <i class="bi ${icon} text-primary me-1"></i>
               <span class="fw-semibold" style="font-size:.9rem">${escapeHtml(v.original_name)}</span>
             </div>
-            <div class="d-flex align-items-center gap-1 flex-shrink-0">
-              ${scanBadge(v.clamav_result)}
-              <span class="badge bg-light text-dark border">${escapeHtml(ext.toUpperCase())}</span>
-            </div>
+            <span class="badge bg-light text-dark border flex-shrink-0">${escapeHtml(ext.toUpperCase())}</span>
           </div>
           <div class="d-flex gap-2 mb-2">
             <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${formatSize(v.size)}</span>
           </div>
           <p class="text-muted small mb-2">${formatDate(v.uploaded_at)}</p>
           <div class="d-flex gap-2">
-            ${downloadBtn}
+            <a href="/api/download/${v.id}" class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i> Descargar</a>
             <button class="btn btn-sm btn-outline-danger" onclick="window._deleteVideo('${v.id}')"><i class="bi bi-trash"></i> Eliminar</button>
           </div>
         </div>`;
