@@ -28,6 +28,47 @@ except ImportError:
 
 from video_analyzer import VideoAnalysisError, analyze_video  # noqa: E402
 
+
+def _read_cgroup_mem(path: str) -> int | None:
+    try:
+        with open(path) as f:
+            raw = f.read().strip()
+            val = int(raw)
+            if val > 0 and val < 2**62:
+                return val
+    except Exception:
+        pass
+    return None
+
+
+def _get_container_memory_total() -> int | None:
+    """Return total system memory in bytes, respecting cgroup limits when in a container."""  # noqa: E501
+    # Try cgroup v2 via /proc/self/cgroup to find the actual container path
+    try:
+        with open("/proc/self/cgroup") as f:
+            for line in f:
+                parts = line.strip().split(":")
+                if len(parts) == 3 and "memory" in parts[1]:
+                    cgroup_path = parts[2].lstrip("/")
+                    for base in ("/sys/fs/cgroup",):
+                        mem_max = _read_cgroup_mem(os.path.join(base, cgroup_path, "memory.max"))
+                        if mem_max is not None:
+                            return mem_max
+    except Exception:
+        pass
+    # Try root cgroup v1 and v2 paths directly
+    for path in ("/sys/fs/cgroup/memory/memory.limit_in_bytes", "/sys/fs/cgroup/memory.max"):
+        val = _read_cgroup_mem(path)
+        if val is not None:
+            return val
+    if psutil is not None:
+        try:
+            return psutil.virtual_memory().total
+        except Exception:
+            pass
+    return None
+
+
 QueueDict = dict[str, Any]
 
 
@@ -471,13 +512,11 @@ def validate_mime_type(filepath: str) -> tuple[bool, str]:
 
 
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
-    if psutil is not None:
-        try:
-            mem = psutil.virtual_memory()
-            if mem.total < 900 * 1024 * 1024:
-                return True, "Memoria insuficiente, escaneo omitido"
-        except Exception:
-            pass
+    mem_total = _get_container_memory_total()
+    if mem_total is not None and mem_total < 900 * 1024 * 1024:
+        return True, "Memoria insuficiente, escaneo omitido"
+    if os.environ.get("RENDER"):
+        return True, "Render: escaneo omitido por límite de memoria"
     try:
         result = subprocess.run(
             [
