@@ -474,7 +474,7 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
     if psutil is not None:
         try:
             mem = psutil.virtual_memory()
-            if mem.available < 200 * 1024 * 1024:
+            if mem.total < 900 * 1024 * 1024:
                 return True, "Memoria insuficiente, escaneo omitido"
         except Exception:
             pass
@@ -486,6 +486,8 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
                 "--no-summary",
                 "--quiet",
                 "--database=/var/lib/clamav",
+                "--max-filesize=200M",
+                "--max-scansize=200M",
                 filepath,
             ],
             capture_output=True,

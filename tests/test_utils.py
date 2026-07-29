@@ -130,7 +130,7 @@ class TestScanWithClamav:
 
     @patch("services.queue.psutil")
     def test_skip_when_low_memory(self, mock_psutil, temp_file):
-        mock_psutil.virtual_memory.return_value.available = 100 * 1024 * 1024  # 100 MB
+        mock_psutil.virtual_memory.return_value.total = 500 * 1024 * 1024  # 500 MB (< 900 MB)
         ok, msg = scan_with_clamav(temp_file)
         assert ok
         assert "Memoria insuficiente" in msg
