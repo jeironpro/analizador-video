@@ -4,10 +4,30 @@
   const progressBar = document.getElementById('progressBar');
   const progressFill = document.getElementById('progressFill');
 
+  const MAX_FILE_SIZE = 500 * 1024 * 1024;
+  const MIN_FILE_SIZE = 50 * 1024 * 1024;
+  const MAX_RETRIES = 3;
+
   // Confirm modal
   const confirmModal = new bootstrap.Modal('#confirmModal');
   const confirmMessage = document.getElementById('confirmMessage');
   const confirmOk = document.getElementById('confirmOk');
+
+  const toastContainer = document.getElementById('toastContainer');
+
+  // ───────── Toast ─────────
+  function showToast(msg, type) {
+    type = type || 'info';
+    const icons = { success: 'bi-check-circle-fill', error: 'bi-x-circle-fill', warning: 'bi-exclamation-triangle-fill', info: 'bi-info-circle-fill' };
+    const el = document.createElement('div');
+    el.className = 'toast-custom toast-' + type;
+    el.innerHTML = '<i class="bi ' + (icons[type] || icons.info) + '"></i> <span>' + escapeHtml(msg) + '</span>';
+    toastContainer.appendChild(el);
+    setTimeout(() => {
+      el.style.animation = 'slideOutRight .3s ease-in forwards';
+      setTimeout(() => el.remove(), 300);
+    }, 4000);
+  }
 
   function showConfirm(msg) {
     return new Promise(resolve => {
@@ -110,9 +130,10 @@
     if (!ok) return;
     fetch('/api/session/delete', { method: 'POST' })
       .then(r => {
-        if (r.ok) window.location.href = '/';
+        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Error') });
+        window.location.href = '/';
       })
-      .catch(() => {});
+      .catch(e => showToast(e.message, 'error'));
   };
 
   // ───────── Upload ─────────
@@ -122,39 +143,88 @@
   uploadZone.addEventListener('drop', e => { e.preventDefault(); uploadZone.classList.remove('dragover'); handleFiles(e.dataTransfer.files); });
   fileInput.addEventListener('change', () => { if (fileInput.files.length) handleFiles(fileInput.files); });
 
-  function handleFiles(files) {
-    progressBar.classList.remove('d-none');
-    progressFill.style.width = '0%';
-    const totalSize = Array.from(files).reduce((s, f) => s + f.size, 0);
-    const uploadedBytes = new Array(files.length).fill(0);
-    let done = 0;
-    Array.from(files).forEach((file, index) => {
+  function uploadFile(file, retries) {
+    retries = retries || 0;
+    return new Promise((resolve, reject) => {
       const formData = new FormData();
       formData.append('video', file);
       const xhr = new XMLHttpRequest();
       xhr.open('POST', '/api/upload', true);
       xhr.upload.onprogress = e => {
         if (e.lengthComputable) {
-          uploadedBytes[index] = e.loaded;
-          const totalUploaded = uploadedBytes.reduce((a, b) => a + b, 0);
-          const pct = Math.min(totalUploaded / totalSize * 100, 99.9);
+          const pct = Math.min(e.loaded / e.total * 100, 99.9);
           progressFill.style.width = pct + '%';
         }
       };
       xhr.onload = () => {
-        uploadedBytes[index] = file.size;
-        done++;
-        if (done === files.length) {
+        if (xhr.status >= 200 && xhr.status < 300) {
           progressFill.style.width = '100%';
-          setTimeout(() => {
-            progressBar.classList.add('d-none');
-            progressFill.style.width = '0%';
-          }, 300);
-          loadQueue();
+          resolve(JSON.parse(xhr.responseText));
+        } else {
+          let msg = 'Error al subir';
+          try { const d = JSON.parse(xhr.responseText); msg = d.error || msg; } catch (_) {}
+          reject(msg);
         }
       };
-      xhr.onerror = () => { done++; };
+      xhr.onerror = () => reject('Error de conexión al subir');
+      xhr.ontimeout = () => reject('Tiempo de espera agotado');
       xhr.send(formData);
+    });
+  }
+
+  function uploadWithRetry(file, retries) {
+    retries = retries || 0;
+    return uploadFile(file, retries).catch(err => {
+      if (retries < MAX_RETRIES) {
+        showToast('Reintentando "' + file.name + '" (' + (retries + 1) + '/' + MAX_RETRIES + '): ' + err, 'warning');
+        return uploadWithRetry(file, retries + 1);
+      }
+      showToast('Error al subir "' + file.name + '": ' + err, 'error');
+      throw err;
+    });
+  }
+
+  function handleFiles(files) {
+    const valid = [];
+    for (const f of files) {
+      if (f.size < MIN_FILE_SIZE) {
+        showToast('"' + f.name + '" es demasiado pequeño (' + formatSize(f.size) + '). Mínimo 50 MB', 'warning');
+        continue;
+      }
+      if (f.size > MAX_FILE_SIZE) {
+        showToast('"' + f.name + '" es demasiado grande (' + formatSize(f.size) + '). Máximo 500 MB', 'warning');
+        continue;
+      }
+      valid.push(f);
+    }
+    if (!valid.length) return;
+
+    progressBar.classList.remove('d-none');
+    progressFill.style.width = '0%';
+
+    let done = 0;
+    valid.forEach((file, i) => {
+      uploadWithRetry(file)
+        .then(() => {
+          done++;
+          if (done === valid.length) {
+            setTimeout(() => {
+              progressBar.classList.add('d-none');
+              progressFill.style.width = '0%';
+            }, 300);
+            showToast(valid.length + ' archivo' + (valid.length !== 1 ? 's' : '') + ' subido' + (valid.length !== 1 ? 's' : '') + ' correctamente', 'success');
+            loadQueue();
+          }
+        })
+        .catch(() => {
+          done++;
+          if (done === valid.length) {
+            setTimeout(() => {
+              progressBar.classList.add('d-none');
+              progressFill.style.width = '0%';
+            }, 300);
+          }
+        });
     });
   }
 
@@ -295,6 +365,18 @@
       </div>`;
   }
 
+  function queueSkeleton() {
+    return '<div class="queue-item p-3 mb-2 skeleton-queue">' +
+      '<div class="d-flex justify-content-between align-items-center gap-2">' +
+        '<div class="d-flex align-items-center gap-2" style="flex:1">' +
+          '<div class="skeleton skeleton-badge"></div>' +
+          '<div class="skeleton skeleton-text" style="width:45%"></div>' +
+        '</div>' +
+        '<div class="skeleton skeleton-badge"></div>' +
+      '</div>' +
+    '</div>';
+  }
+
   function renderQueue(items) {
     const existingIds = new Set(items.map(i => i.temp_id));
     let activeCount = 0;
@@ -338,6 +420,7 @@
   }
 
   function loadQueue() {
+    queueContainer.innerHTML = queueSkeleton() + queueSkeleton();
     fetch('/api/queue')
       .then(r => r.json())
       .then(items => renderQueue(items))
@@ -379,7 +462,27 @@
     videoContainer.innerHTML = html;
   }
 
+  function videoGridSkeleton() {
+    let html = '';
+    for (let i = 0; i < 3; i++) {
+      html += '<div class="video-card p-3">' +
+        '<div class="d-flex justify-content-between align-items-start mb-2">' +
+          '<div class="skeleton skeleton-text" style="width:55%"></div>' +
+          '<div class="skeleton skeleton-badge"></div>' +
+        '</div>' +
+        '<div class="skeleton skeleton-text short mb-2"></div>' +
+        '<div class="skeleton skeleton-text" style="width:40%;height:12px;margin-bottom:12px"></div>' +
+        '<div class="d-flex gap-2">' +
+          '<div class="skeleton" style="width:90px;height:30px;border-radius:6px"></div>' +
+          '<div class="skeleton" style="width:90px;height:30px;border-radius:6px"></div>' +
+        '</div>' +
+      '</div>';
+    }
+    return html;
+  }
+
   function loadVideos() {
+    videoContainer.innerHTML = '<div class="video-grid">' + videoGridSkeleton() + '</div>';
     fetch('/api/videos')
       .then(r => r.json())
       .then(videos => renderVideos(videos))
@@ -390,8 +493,11 @@
     const ok = await showConfirm('¿Eliminar este video definitivamente?');
     if (!ok) return;
     fetch('/api/delete/' + id, { method: 'DELETE' })
-      .then(r => { if (r.ok) loadVideos(); })
-      .catch(() => {});
+      .then(r => {
+        if (r.ok) { loadVideos(); showToast('Video eliminado', 'success'); }
+        else r.json().then(d => showToast(d.error || 'Error al eliminar', 'error'));
+      })
+      .catch(() => showToast('Error de conexión', 'error'));
   };
 
   // ───────── Init ─────────

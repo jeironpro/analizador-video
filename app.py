@@ -528,6 +528,18 @@ def delete(video_id):
     return jsonify({"message": "Video eliminado correctamente"}), 200
 
 
+# ---------------------------------------------------------------------------
+# Error pages
+# ---------------------------------------------------------------------------
+@app.errorhandler(404)
+def not_found(e):
+    return render_template("404.html"), 404
+
+@app.errorhandler(500)
+def server_error(e):
+    return render_template("500.html"), 500
+
+
 # Load queue from DB on startup
 with app.app_context():
     queue.load_from_db()

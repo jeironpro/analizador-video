@@ -5,3 +5,4 @@ instance/
 .DS_Store
 .env
 *.db
+scan_local.py

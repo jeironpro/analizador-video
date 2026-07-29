@@ -213,3 +213,108 @@ body {
   color: #94a3b8;
   flex-shrink: 0;
 }
+
+/* ───────── Skeleton ───────── */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: #e2e8f0;
+  background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+.skeleton-text {
+  height: 14px;
+  width: 60%;
+  margin-bottom: 8px;
+}
+.skeleton-text.short { width: 35%; }
+.skeleton-block {
+  height: 96px;
+  width: 100%;
+}
+.skeleton-card {
+  height: 180px;
+  width: 100%;
+}
+.skeleton-badge {
+  height: 22px;
+  width: 60px;
+  border-radius: 999px;
+}
+
+/* ───────── Toast ───────── */
+.toast-container-custom {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  max-width: 360px;
+  width: 100%;
+}
+.toast-custom {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: .75rem 1rem;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12);
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+  font-size: .875rem;
+  animation: slideInRight .3s ease-out;
+}
+.toast-custom.toast-success { border-left: 4px solid #22c55e; }
+.toast-custom.toast-error   { border-left: 4px solid #ef4444; }
+.toast-custom.toast-warning { border-left: 4px solid #f59e0b; }
+.toast-custom.toast-info    { border-left: 4px solid #3b82f6; }
+.toast-custom i { font-size: 1.1rem; }
+.toast-custom.toast-success i { color: #22c55e; }
+.toast-custom.toast-error   i { color: #ef4444; }
+.toast-custom.toast-warning i { color: #f59e0b; }
+.toast-custom.toast-info    i { color: #3b82f6; }
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+@keyframes slideOutRight {
+  from { transform: translateX(0); opacity: 1; }
+  to   { transform: translateX(100%); opacity: 0; }
+}
+
+/* ───────── Error pages ───────── */
+.error-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  text-align: center;
+  padding: 2rem;
+}
+.error-page .error-code {
+  font-size: 5rem;
+  font-weight: 800;
+  color: #e2e8f0;
+  line-height: 1;
+}
+.error-page .error-icon {
+  font-size: 3rem;
+  color: #94a3b8;
+  margin-bottom: 1rem;
+}
+.error-page h4 {
+  font-weight: 600;
+  color: #0f172a;
+}
+.error-page p {
+  color: #64748b;
+  max-width: 400px;
+}
