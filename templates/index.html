@@ -11,17 +11,33 @@
 </head>
 <body>
 
-<nav class="navbar navbar-custom">
+<nav class="navbar navbar-custom navbar-expand-sm">
   <div class="container">
     <span class="navbar-brand mb-0 d-flex align-items-center gap-2 fw-semibold text-dark">
       <i class="bi bi-camera-reels" style="color:#e94560;font-size:1.3rem"></i>
       Analizador de Video
     </span>
-    <div class="d-flex align-items-center gap-2">
-      <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="copiarEnlace()" title="Compartir sesión">
-        <i class="bi bi-share-fill"></i> Compartir
-      </button>
-      <span class="badge bg-primary bg-opacity-10 text-primary px-3 py-2" id="videoCount">0 videos</span>
+    <button class="navbar-toggler border-0" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+    <div class="collapse navbar-collapse" id="navMenu">
+      <div class="d-flex flex-wrap align-items-center gap-2 ms-auto">
+        <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="copiarEnlace()" title="Compartir sesión">
+          <i class="bi bi-share-fill"></i> Compartir
+        </button>
+        <span class="badge bg-light text-dark border px-2 py-1 small" id="sessionCode"></span>
+        <span class="badge bg-primary bg-opacity-10 text-primary px-3 py-2" id="videoCount">0 videos</span>
+        <div class="dropdown">
+          <button class="btn btn-sm btn-outline-secondary rounded-pill" data-bs-toggle="dropdown">
+            <i class="bi bi-gear"></i>
+          </button>
+          <ul class="dropdown-menu dropdown-menu-end shadow-sm border-0 rounded-3">
+            <li><button class="dropdown-item" onclick="unirseSesion()"><i class="bi bi-box-arrow-in-right"></i> Unirse a sesión</button></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><button class="dropdown-item text-danger" onclick="eliminarSesion()"><i class="bi bi-trash3"></i> Eliminar sesión</button></li>
+          </ul>
+        </div>
+      </div>
     </div>
   </div>
 </nav>
@@ -78,16 +94,41 @@
 
 </div>
 
+<footer class="footer-custom">
+  <div class="container text-center">
+    <p class="small mb-0">Analizador de Video &mdash; Los videos se almacenan hasta que la sesión expire o se elimine</p>
+  </div>
+</footer>
+
+<!-- Confirm modal (reusable) -->
 <div class="modal fade" id="confirmModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content" style="border: none; border-radius: 12px;">
       <div class="modal-body text-center py-4">
         <i class="bi bi-exclamation-triangle text-danger" style="font-size: 2rem;"></i>
-        <p class="mt-2 mb-0" id="confirmMessage">¿Eliminar este video definitivamente?</p>
+        <p class="mt-2 mb-0" id="confirmMessage"></p>
       </div>
       <div class="modal-footer d-flex justify-content-center gap-2 border-0 pt-0 pb-3">
         <button class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">Cancelar</button>
         <button class="btn btn-danger px-4" id="confirmOk">Eliminar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Join session modal -->
+<div class="modal fade" id="joinModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content" style="border: none; border-radius: 12px;">
+      <div class="modal-body text-center py-4">
+        <i class="bi bi-box-arrow-in-right text-primary" style="font-size: 2rem;"></i>
+        <p class="mt-2 mb-1 fw-semibold">Unirse a sesión</p>
+        <p class="text-muted small mb-3">Ingresa el código de 8 caracteres</p>
+        <input type="text" class="form-control text-center text-uppercase" id="joinCodeInput" maxlength="8" placeholder="ABC12345" style="font-family: monospace; font-size:1.2rem; letter-spacing: .2em;">
+      </div>
+      <div class="modal-footer d-flex justify-content-center gap-2 border-0 pt-0 pb-3">
+        <button class="btn btn-outline-secondary px-4" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary px-4" id="joinOk">Unirse</button>
       </div>
     </div>
   </div>

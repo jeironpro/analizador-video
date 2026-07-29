@@ -3,6 +3,8 @@
   const fileInput = document.getElementById('fileInput');
   const progressBar = document.getElementById('progressBar');
   const progressFill = document.getElementById('progressFill');
+
+  // Confirm modal
   const confirmModal = new bootstrap.Modal('#confirmModal');
   const confirmMessage = document.getElementById('confirmMessage');
   const confirmOk = document.getElementById('confirmOk');
@@ -24,9 +26,29 @@
       function hideHandler() { cleanup(); resolve(false); }
     });
   }
+
+  // Join session modal
+  const joinModal = new bootstrap.Modal('#joinModal');
+  const joinInput = document.getElementById('joinCodeInput');
+  document.getElementById('joinOk').addEventListener('click', () => {
+    const code = joinInput.value.trim().toUpperCase();
+    if (code.length === 8) {
+      joinModal.hide();
+      window.location.href = '/s/' + code + '/';
+    }
+  });
+  joinInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('joinOk').click();
+  });
+  joinInput.addEventListener('input', () => {
+    joinInput.value = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  });
+  joinModal._element.addEventListener('hidden.bs.modal', () => { joinInput.value = ''; });
+
   const queueCard = document.getElementById('queueCard');
   const queueContainer = document.getElementById('queueContainer');
   const videoContainer = document.getElementById('videoContainer');
+  const sessionCodeEl = document.getElementById('sessionCode');
   const esMap = {};
 
   const STATUS_MAP = {
@@ -54,6 +76,37 @@
     const map = { mp4: 'file-play', webm: 'file-play', mkv: 'file-earmark', avi: 'file-earmark', mov: 'file-play', mpeg: 'file-play', wmv: 'file-earmark' };
     return 'bi-' + (map[ext.replace('.','')] || 'file-earmark');
   }
+
+  // ───────── Session ─────────
+  function loadSession() {
+    fetch('/api/session')
+      .then(r => r.json())
+      .then(d => { if (d.code) sessionCodeEl.textContent = d.code; })
+      .catch(() => {});
+  }
+
+  window.unirseSesion = function () { joinModal.show(); };
+
+  window.copiarEnlace = function () {
+    const url = window.location.href;
+    navigator.clipboard.writeText(url).then(() => {
+      const btn = document.querySelector('[onclick="copiarEnlace()"]');
+      if (!btn) return;
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-check-lg"></i> Copiado';
+      setTimeout(() => btn.innerHTML = orig, 2000);
+    }).catch(() => {});
+  };
+
+  window.eliminarSesion = async function () {
+    const ok = await showConfirm('¿Eliminar toda la sesión? Se borrarán todos los videos, archivos y datos. Esta acción no se puede deshacer.');
+    if (!ok) return;
+    fetch('/api/session/delete', { method: 'POST' })
+      .then(r => {
+        if (r.ok) window.location.href = '/';
+      })
+      .catch(() => {});
+  };
 
   // ───────── Upload ─────────
   uploadZone.addEventListener('click', () => fileInput.click());
@@ -239,12 +292,10 @@
     const existingIds = new Set(items.map(i => i.temp_id));
     let activeCount = 0;
 
-    // Render or update each item
     items.forEach(item => {
       if (item.status !== 'done' && item.status !== 'error') activeCount++;
       const el = document.getElementById('q-' + item.temp_id);
       if (el) {
-        // Update existing
         setQueueStatus(item.temp_id, item.status);
         if (item.status === 'uploaded') {
           const actions = document.getElementById('q-actions-' + item.temp_id);
@@ -262,7 +313,6 @@
           if (!esMap[item.temp_id]) startQueueStream(item.temp_id);
         }
       } else {
-        // New item
         queueContainer.insertAdjacentHTML('beforeend', makeQueueItem(item));
         if (item.status === 'processing' || item.status === 'queued') {
           startQueueStream(item.temp_id);
@@ -270,7 +320,6 @@
       }
     });
 
-    // Remove stale items
     document.querySelectorAll('#queueContainer > .queue-item').forEach(el => {
       const id = el.id.replace(/^q-/, '');
       if (id && !existingIds.has(id)) el.remove();
@@ -337,19 +386,9 @@
   };
 
   // ───────── Init ─────────
+  loadSession();
   loadQueue();
   loadVideos();
-
-  window.copiarEnlace = function () {
-    const url = window.location.href;
-    navigator.clipboard.writeText(url).then(() => {
-      const btn = document.querySelector('[onclick="copiarEnlace()"]');
-      if (!btn) return;
-      const orig = btn.innerHTML;
-      btn.innerHTML = '<i class="bi bi-check-lg"></i> Copiado';
-      setTimeout(() => btn.innerHTML = orig, 2000);
-    }).catch(() => {});
-  };
 
   let queueES = null;
   function connectQueueSSE() {

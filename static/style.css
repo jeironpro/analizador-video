@@ -177,3 +177,12 @@ body {
 @media (min-width: 992px) {
   .video-grid { grid-template-columns: repeat(3, 1fr); }
 }
+
+/* Footer */
+.footer-custom {
+  background: #fff;
+  border-top: 1px solid #e2e8f0;
+  padding: 1rem 0;
+  margin-top: 2rem;
+  color: #94a3b8;
+}

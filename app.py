@@ -200,6 +200,42 @@ def session_view(code):
     return resp
 
 
+@app.route("/api/session")
+def session_info():
+    code = _session_required()
+    if not code:
+        return jsonify({"error": "Sesión no válida"}), 401
+    return jsonify({"code": code})
+
+
+@app.route("/api/session/delete", methods=["POST"])
+def session_delete():
+    code = _session_required()
+    if not code:
+        return jsonify({"error": "Sesión no válida"}), 401
+    from models import QueueItem
+    videos = Video.query.filter_by(session_id=code).all()
+    for v in videos:
+        fpath = os.path.join(app.config["UPLOAD_FOLDER"], code, v.filename)
+        if os.path.exists(fpath):
+            os.remove(fpath)
+        db.session.delete(v)
+    QueueItem.query.filter_by(session_id=code).delete()
+    sess = db.session.get(Session, code)
+    if sess:
+        db.session.delete(sess)
+    db.session.commit()
+    sdir = os.path.join(app.config["UPLOAD_FOLDER"], code)
+    if os.path.exists(sdir):
+        try:
+            os.rmdir(sdir)
+        except OSError:
+            pass
+    resp = jsonify({"message": "Sesión eliminada"})
+    resp.set_cookie("session_code", "", expires=0)
+    return resp
+
+
 # ---------------------------------------------------------------------------
 # API routes (all require valid session)
 # ---------------------------------------------------------------------------
