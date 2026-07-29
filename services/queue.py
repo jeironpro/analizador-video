@@ -42,7 +42,7 @@ class QueueManager:
         with self._lock:
             return self._queue.get(temp_id)
 
-    def list_items(self):
+    def list_items(self, session_code=None):
         with self._lock:
             return [
                 {
@@ -51,9 +51,10 @@ class QueueManager:
                     "status": qi["status"],
                 }
                 for qi in self._queue.values()
+                if session_code is None or qi.get("session_code") == session_code
             ]
 
-    def add(self, temp_id, temp_path, temp_filename, original_name, ext):
+    def add(self, temp_id, temp_path, temp_filename, original_name, ext, session_code):
         with self._lock:
             self._queue[temp_id] = {
                 "temp_id": temp_id,
@@ -61,6 +62,7 @@ class QueueManager:
                 "temp_filename": temp_filename,
                 "original_name": original_name,
                 "ext": ext,
+                "session_code": session_code,
                 "status": "uploaded",
                 "logs": [],
                 "result": None,
@@ -123,6 +125,7 @@ class QueueManager:
             ext = item["ext"]
             temp_path = item["temp_path"]
             temp_filename = item["temp_filename"]
+            session_code = item.get("session_code", "LEGACY01")
         try:
             from models import QueueItem
             qi = QueueItem(
@@ -131,6 +134,7 @@ class QueueManager:
                 ext=ext,
                 temp_path=temp_path,
                 temp_filename=temp_filename,
+                session_id=session_code,
                 status="uploaded",
                 logs="[]",
             )
@@ -192,6 +196,7 @@ class QueueManager:
                         "temp_filename": qi.temp_filename,
                         "original_name": qi.original_name,
                         "ext": qi.ext,
+                        "session_code": qi.session_id,
                         "status": qi.status,
                         "logs": json.loads(qi.logs) if qi.logs else [],
                         "result": json.loads(qi.result) if qi.result else None,
@@ -305,7 +310,9 @@ class QueueManager:
                     self.log(temp_id, "save", "checking", "Guardando archivo...")
                     video_id = str(uuid.uuid4())
                     filename = f"{video_id}{item['ext']}"
-                    final_path = os.path.join(self._upload_folder, filename)
+                    session_dir = os.path.join(self._upload_folder, item["session_code"])
+                    os.makedirs(session_dir, exist_ok=True)
+                    final_path = os.path.join(session_dir, filename)
                     shutil.move(tp, final_path)
 
                     mime_type = validate_mime_type(final_path)
@@ -321,6 +328,7 @@ class QueueManager:
                         mime_type=mime_val,
                         analysis_result=str(analysis.get("errors", [])),
                         clamav_result=clam_msg,
+                        session_id=item["session_code"],
                     )
                     self.db.session.add(video)
                     self.db.session.commit()

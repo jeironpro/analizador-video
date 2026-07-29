@@ -340,6 +340,17 @@
   loadQueue();
   loadVideos();
 
+  window.copiarEnlace = function () {
+    const url = window.location.href;
+    navigator.clipboard.writeText(url).then(() => {
+      const btn = document.querySelector('[onclick="copiarEnlace()"]');
+      if (!btn) return;
+      const orig = btn.innerHTML;
+      btn.innerHTML = '<i class="bi bi-check-lg"></i> Copiado';
+      setTimeout(() => btn.innerHTML = orig, 2000);
+    }).catch(() => {});
+  };
+
   let queueES = null;
   function connectQueueSSE() {
     if (queueES) queueES.close();

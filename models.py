@@ -4,6 +4,13 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 
+class Session(db.Model):
+    __tablename__ = "sessions"
+    code = db.Column(db.String(8), primary_key=True)
+    created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    last_active = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class Video(db.Model):
     __tablename__ = "video"
     id = db.Column(db.String(36), primary_key=True)
@@ -15,6 +22,7 @@ class Video(db.Model):
     analysis_result = db.Column(db.Text)
     clamav_result = db.Column(db.String(50))
     uploaded_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    session_id = db.Column(db.String(8), nullable=False, default='LEGACY01')
 
     def to_dict(self):
         return {
@@ -39,3 +47,4 @@ class QueueItem(db.Model):
     error = db.Column(db.Text)
     result = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc))
+    session_id = db.Column(db.String(8), nullable=False, default='LEGACY01')
