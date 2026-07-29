@@ -1,17 +1,16 @@
-from logging.config import fileConfig
 import os
+from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from models import db
 
 config = context.config
+target_metadata = db.metadata
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
-
-from models import db
-target_metadata = db.metadata
 
 
 def run_migrations_offline():
@@ -30,6 +29,7 @@ def run_migrations_offline():
 
 def run_migrations_online():
     from app import app
+
     with app.app_context():
         connectable = db.engine
         with connectable.connect() as connection:

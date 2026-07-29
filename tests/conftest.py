@@ -1,5 +1,6 @@
 import os
 import tempfile
+
 import pytest
 
 
@@ -25,6 +26,7 @@ def temp_file():
 @pytest.fixture
 def app():
     from flask import Flask
+
     from models import db
 
     app = Flask(__name__)

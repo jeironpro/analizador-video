@@ -5,7 +5,6 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
-
 ALLOWED_VIDEO_CODECS: set[str] = {"h264", "hevc", "vp9", "av1", "mpeg4", "png", "prores", "dnxhd", "mpeg2video"}
 ALLOWED_AUDIO_CODECS: set[str] = {"aac", "mp3", "opus", "vorbis", "pcm_s16le"}
 ALLOWED_CONTAINERS: set[str] = {"mp4", "webm", "mkv", "avi", "mov"}
@@ -15,11 +14,11 @@ MAX_FRAME_RATE: int = 120
 MIN_FRAME_RATE: int = 1
 MAX_DURATION_SECONDS: int = 86400
 CONTAINER_CODEC_MAP: dict[str, set[str]] = {
-    "mp4":  {"h264", "hevc", "aac", "mp3", "png", "prores", "mpeg2video"},
+    "mp4": {"h264", "hevc", "aac", "mp3", "png", "prores", "mpeg2video"},
     "webm": {"vp9", "vp8", "opus", "vorbis"},
-    "mkv":  {"h264", "hevc", "vp9", "av1", "aac", "opus", "vorbis", "mp3"},
-    "avi":  {"mpeg4", "mp3", "pcm_s16le"},
-    "mov":  {"h264", "hevc", "aac", "mp3", "pcm_s16le", "png", "prores"},
+    "mkv": {"h264", "hevc", "vp9", "av1", "aac", "opus", "vorbis", "mp3"},
+    "avi": {"mpeg4", "mp3", "pcm_s16le"},
+    "mov": {"h264", "hevc", "aac", "mp3", "pcm_s16le", "png", "prores"},
 }
 
 
@@ -29,8 +28,11 @@ class VideoAnalysisError(Exception):
 
 def _get_container_format(filepath: str) -> str:
     cmd = [
-        "ffprobe", "-v", "quiet",
-        "-print_format", "json",
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_format",
         filepath,
     ]
@@ -44,8 +46,11 @@ def _get_container_format(filepath: str) -> str:
 
 def _get_streams(filepath: str) -> list[dict[str, Any]]:
     cmd = [
-        "ffprobe", "-v", "quiet",
-        "-print_format", "json",
+        "ffprobe",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_streams",
         "-show_format",
         filepath,
@@ -105,19 +110,19 @@ def analyze_video(filepath: str) -> dict[str, Any]:
             if fps < MIN_FRAME_RATE:
                 errors.append(f"FPS de video demasiado bajo: {fps}")
 
-        stream_details.append({
-            "type": "video",
-            "codec": codec,
-            "resolution": f"{width}x{height}",
-            "fps": round(fps, 2),
-            "bitrate": vs.get("bitrate", "N/A"),
-        })
+        stream_details.append(
+            {
+                "type": "video",
+                "codec": codec,
+                "resolution": f"{width}x{height}",
+                "fps": round(fps, 2),
+                "bitrate": vs.get("bitrate", "N/A"),
+            }
+        )
 
         container_allowed = CONTAINER_CODEC_MAP.get(container, set())
         if codec not in container_allowed:
-            errors.append(
-                f"Códec {codec} no es compatible con el contenedor {container}"
-            )
+            errors.append(f"Códec {codec} no es compatible con el contenedor {container}")
 
     for a_stream in audio_streams:
         codec = a_stream.get("codec_name", "").lower()
@@ -127,17 +132,17 @@ def analyze_video(filepath: str) -> dict[str, Any]:
 
         container_allowed = CONTAINER_CODEC_MAP.get(container, set())
         if codec not in container_allowed:
-            errors.append(
-                f"Códec {codec} no es compatible con el contenedor {container}"
-            )
+            errors.append(f"Códec {codec} no es compatible con el contenedor {container}")
 
-        stream_details.append({
-            "type": "audio",
-            "codec": codec,
-            "channels": a_stream.get("channels", "N/A"),
-            "sample_rate": a_stream.get("sample_rate", "N/A"),
-            "bitrate": a_stream.get("bitrate", "N/A"),
-        })
+        stream_details.append(
+            {
+                "type": "audio",
+                "codec": codec,
+                "channels": a_stream.get("channels", "N/A"),
+                "sample_rate": a_stream.get("sample_rate", "N/A"),
+                "bitrate": a_stream.get("bitrate", "N/A"),
+            }
+        )
 
     for s in streams:
         tags = s.get("tags", {})

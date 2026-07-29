@@ -1,9 +1,9 @@
 import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from services.queue import validate_file_size, validate_mime_type, scan_with_clamav
+from services.queue import scan_with_clamav, validate_file_size, validate_mime_type
 
 
 class TestValidateFileSize:
@@ -122,6 +122,7 @@ class TestScanWithClamav:
     @patch("services.queue.subprocess.run")
     def test_timeout(self, mock_run, temp_file):
         from subprocess import TimeoutExpired
+
         mock_run.side_effect = TimeoutExpired("clamscan", 300)
         ok, msg = scan_with_clamav(temp_file)
         assert ok
@@ -135,5 +136,6 @@ class TestScanWithClamav:
         assert "Memoria insuficiente" in msg
         # subprocess.run should not be called
         from services.queue import subprocess as sp_module
+
         with patch.object(sp_module, "run") as mock_run:
             mock_run.assert_not_called()

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import os
 import shutil
-import time
 import threading
-from datetime import datetime, timezone, timedelta
+import time
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 
@@ -29,7 +29,7 @@ class CleanupDaemon:
     def _cleanup(self) -> None:
         from models import Session
 
-        cutoff = datetime.now(timezone.utc) - timedelta(days=self.days)
+        cutoff = datetime.now(UTC) - timedelta(days=self.days)
         with self.app.app_context():
             expired = Session.query.filter(Session.last_active < cutoff).all()
             for sess in expired:

@@ -53,12 +53,12 @@ Aplicación web para escanear, validar y almacenar archivos de video. Utiliza Cl
                             │
            ┌────────────────┼────────────────┬─────────────────┐
            │                │                │                 │
-    ┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────┐
+    ┌──────┴──────┐  ┌──────┴──────┐  ┌──────┴──────┐  ┌───────┴─────┐
     │ PostgreSQL  │  │    Disco    │  │   ClamAV    │  │   ffprobe   │
-    │ (queue +    │  │  /data/     │  │  (clamscan) │  │  (ffmpeg)   │
-    │  sessions + │  │  uploads/   │  │             │  │             │
-    │  videos)    │  │  temp/      │  │             │  │             │
-    └─────────────┘  └────────────┘  └─────────────┘  └─────────────┘
+    │  (queue +   │  │   /data/    │  │  (clamscan) │  │  (ffmpeg)   │
+    │  sessions + │  │   uploads/  │  │             │  │             │
+    │   videos)   │  │    temp/    │  │             │  │             │
+    └─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘
 ```
 
 ## Despliegue en Render

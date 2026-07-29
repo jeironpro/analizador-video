@@ -4,7 +4,6 @@ from unittest.mock import patch
 
 import pytest
 
-
 # Patch targets:
 #   app.XX → upload endpoint (which imports validate_mime_type locally)
 #   services.queue.XX → _process_item (calls them from the same module)
@@ -13,12 +12,15 @@ UPLOAD_PATCHES = [
     patch("services.queue.validate_mime_type", return_value=(True, "video/mp4")),
     patch("services.queue.validate_file_size", return_value=(True, "100.0 MB")),
     patch("services.queue.scan_with_clamav", return_value=(True, "Archivo limpio")),
-    patch("services.queue.analyze_video", return_value={
-        "valid": True,
-        "container": "mp4",
-        "streams": [{"type": "video", "codec": "h264", "resolution": "1920x1080", "fps": 30.0}],
-        "errors": [],
-    }),
+    patch(
+        "services.queue.analyze_video",
+        return_value={
+            "valid": True,
+            "container": "mp4",
+            "streams": [{"type": "video", "codec": "h264", "resolution": "1920x1080", "fps": 30.0}],
+            "errors": [],
+        },
+    ),
 ]
 
 
@@ -36,8 +38,9 @@ def _remove_patches():
 # Fixtures
 # ---------------------------------------------------------------------------
 def _reset_db():
-    from models import db
     from app import app as _app
+    from models import db
+
     with _app.app_context():
         db.drop_all()
         db.create_all()
@@ -54,6 +57,7 @@ def _with_patches(request):
 @pytest.fixture
 def client(_with_patches):
     from app import app as _app
+
     return _app.test_client()
 
 
@@ -149,6 +153,7 @@ class TestQueue:
         assert r.status_code == 200
 
         import time
+
         for _ in range(20):
             items = client.get("/api/queue").json
             if items and items[0]["status"] == "done":

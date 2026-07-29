@@ -1,28 +1,35 @@
 from __future__ import annotations
 
-import os
-import uuid
 import json
-import time
-import signal
-import sys
-import shutil
-import secrets
-import string
 import logging
+import os
+import secrets
+import shutil
+import signal
+import string
+import sys
 import threading
-from datetime import datetime, timezone
+import time
+import uuid
+from datetime import UTC, datetime, timezone
 from typing import Any, Optional
 
 from flask import (
-    Flask, request, render_template, jsonify, send_file, Response,
-    stream_with_context, redirect, make_response,
+    Flask,
+    Response,
+    jsonify,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    stream_with_context,
 )
 from werkzeug.utils import secure_filename
 
-from models import db, Video, Session
-from services.queue import QueueManager, validate_file_size, validate_mime_type
+from models import Session, Video, db
 from services.cleanup import CleanupDaemon
+from services.queue import QueueManager, validate_file_size, validate_mime_type
 
 app = Flask(__name__)
 
@@ -32,15 +39,18 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        return json.dumps({
-            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-            "module": record.module,
-            "func": record.funcName,
-            "line": record.lineno,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": record.getMessage(),
+                "module": record.module,
+                "func": record.funcName,
+                "line": record.lineno,
+            },
+            ensure_ascii=False,
+        )
 
 
 if os.environ.get("LOG_FORMAT", "json" if os.environ.get("RENDER") else "text").lower() in ("json", "true", "1"):
@@ -125,10 +135,7 @@ class RateLimiter:
     def cleanup(self) -> None:
         now = time.time()
         with self._lock:
-            self._buckets = {
-                k: [t for t in ts if now - t < self.window]
-                for k, ts in self._buckets.items()
-            }
+            self._buckets = {k: [t for t in ts if now - t < self.window] for k, ts in self._buckets.items()}
 
 
 _upload_limiter = RateLimiter(
@@ -143,7 +150,9 @@ def _validate_config() -> None:
             database_url.replace(
                 database_url.split("@")[-1].split(":")[0] if "@" in database_url else "",
                 "****",
-            ) if "postgres" in database_url else database_url
+            )
+            if "postgres" in database_url
+            else database_url
         ),
         "UPLOAD_DIR": base_dir,
         "SESSION_DAYS": app.config["SESSION_DAYS"],
@@ -169,7 +178,7 @@ SESSION_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
 def _generate_session_code(length: int = 8) -> str:
-    return ''.join(secrets.choice(SESSION_CODE_ALPHABET) for _ in range(length))
+    return "".join(secrets.choice(SESSION_CODE_ALPHABET) for _ in range(length))
 
 
 def _create_session() -> str:
@@ -183,17 +192,17 @@ def _create_session() -> str:
     return code
 
 
-def _get_session_code() -> Optional[str]:
+def _get_session_code() -> str | None:
     return request.cookies.get("session_code")
 
 
-def _session_required() -> Optional[str]:
+def _session_required() -> str | None:
     code = _get_session_code()
     if not code:
         return None
     sess = db.session.get(Session, code)
     if sess:
-        sess.last_active = datetime.now(timezone.utc)
+        sess.last_active = datetime.now(UTC)
         db.session.commit()
         return code
     return None
@@ -227,7 +236,9 @@ def _run_alembic_migrations() -> None:
         raise FileNotFoundError("alembic.ini not found")
     try:
         from alembic.config import Config
+
         from alembic import command
+
         cfg = Config(alembic_cfg_path)
         command.upgrade(cfg, "head")
         app.logger.info("Migraciones Alembic ejecutadas correctamente")
@@ -242,9 +253,15 @@ def _migrate_schema() -> None:
     if inspector.has_table("video"):
         cols = {c["name"] for c in inspector.get_columns("video")}
         video_cols = {
-            "id": "VARCHAR(36)", "filename": "VARCHAR(255)", "original_name": "VARCHAR(255)",
-            "size": "INTEGER", "container": "VARCHAR(20)", "mime_type": "VARCHAR(100)",
-            "analysis_result": "TEXT", "clamav_result": "VARCHAR(50)", "uploaded_at": "TIMESTAMP",
+            "id": "VARCHAR(36)",
+            "filename": "VARCHAR(255)",
+            "original_name": "VARCHAR(255)",
+            "size": "INTEGER",
+            "container": "VARCHAR(20)",
+            "mime_type": "VARCHAR(100)",
+            "analysis_result": "TEXT",
+            "clamav_result": "VARCHAR(50)",
+            "uploaded_at": "TIMESTAMP",
             "session_id": "VARCHAR(8)",
         }
         with engine.connect() as conn:
@@ -271,13 +288,14 @@ def _migrate_schema() -> None:
 
 def _migrate_sessions() -> None:
     from models import QueueItem
-    has_legacy = db.session.query(Video).filter(Video.session_id == None).count() > 0
+
+    has_legacy = db.session.query(Video).filter(Video.session_id.is_(None)).count() > 0
     if not has_legacy:
         return
     legacy = Session(code="LEGACY01")
     db.session.add(legacy)
-    Video.query.filter(Video.session_id == None).update({"session_id": "LEGACY01"})
-    QueueItem.query.filter(QueueItem.session_id == None).update({"session_id": "LEGACY01"})
+    Video.query.filter(Video.session_id.is_(None)).update({"session_id": "LEGACY01"})
+    QueueItem.query.filter(QueueItem.session_id.is_(None)).update({"session_id": "LEGACY01"})
     legacy_dir = os.path.join(app.config["UPLOAD_FOLDER"], "LEGACY01")
     os.makedirs(legacy_dir, exist_ok=True)
     for f in os.listdir(app.config["UPLOAD_FOLDER"]):
@@ -315,7 +333,7 @@ def index() -> Response:
     if code:
         sess = db.session.get(Session, code)
         if sess:
-            sess.last_active = datetime.now(timezone.utc)
+            sess.last_active = datetime.now(UTC)
             db.session.commit()
             return redirect(f"/s/{code}/")
     code = _create_session()
@@ -332,7 +350,7 @@ def session_view(code: str) -> Response:
     if not sess:
         app.logger.info("Session code %s not found, creating new session", code)
         return redirect("/")
-    sess.last_active = datetime.now(timezone.utc)
+    sess.last_active = datetime.now(UTC)
     db.session.commit()
     resp = make_response(render_template("index.html"))
     resp.set_cookie("session_code", code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
@@ -353,6 +371,7 @@ def session_delete() -> tuple[Response, int]:
     if not code:
         return jsonify({"error": "Sesión no válida"}), 401
     from models import QueueItem
+
     videos = Video.query.filter_by(session_id=code).all()
     for v in videos:
         fpath = os.path.join(app.config["UPLOAD_FOLDER"], code, v.filename)
@@ -413,7 +432,12 @@ def upload() -> tuple[Response, int]:
     max_items = app.config["MAX_QUEUE_ITEMS"]
     current = queue.count_items(code)
     if current >= max_items:
-        return jsonify({"error": f"Límite de {max_items} archivos en cola alcanzado. Procesá o eliminá algunos antes de subir más."}), 429
+        return jsonify(
+            {
+                "error": f"Límite de {max_items} archivos en cola alcanzado. "
+                f"Procesá o eliminá algunos antes de subir más."
+            }
+        ), 429
 
     if "video" not in request.files:
         return jsonify({"error": "No se envió ningún archivo"}), 400

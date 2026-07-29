@@ -1,7 +1,7 @@
+import json
 import os
 import time
-import json
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -129,9 +129,7 @@ class TestQueueProcessItem:
     @patch("services.queue.scan_with_clamav")
     @patch("services.queue.validate_mime_type")
     @patch("services.queue.validate_file_size")
-    def test_process_item_success(
-        self, mock_size, mock_mime, mock_clam, mock_analyze, qm, app
-    ):
+    def test_process_item_success(self, mock_size, mock_mime, mock_clam, mock_analyze, qm, app):
         mock_size.return_value = (True, "100.0 MB")
         mock_mime.return_value = (True, "video/mp4")
         mock_clam.return_value = (True, "Archivo limpio")
@@ -148,8 +146,12 @@ class TestQueueProcessItem:
             f.write(b"x" * 1024)
 
         qm.add(
-            "id-1", filepath, "test_video.mp4",
-            "test_video.mp4", ".mp4", "SESS001",
+            "id-1",
+            filepath,
+            "test_video.mp4",
+            "test_video.mp4",
+            ".mp4",
+            "SESS001",
         )
         qm.update_status("id-1", "processing")
         qm._process_item("id-1")
@@ -163,9 +165,7 @@ class TestQueueProcessItem:
     @patch("services.queue.scan_with_clamav")
     @patch("services.queue.validate_mime_type")
     @patch("services.queue.validate_file_size")
-    def test_process_item_retry_then_error(
-        self, mock_size, mock_mime, mock_clam, mock_analyze, qm, app
-    ):
+    def test_process_item_retry_then_error(self, mock_size, mock_mime, mock_clam, mock_analyze, qm, app):
         qm._max_retries = 1
         mock_size.return_value = (False, "Demasiado pequeño")
 

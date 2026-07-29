@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import os
-import uuid
 import json
-import time
-import threading
-import subprocess
-import shutil
 import mimetypes
-from datetime import datetime, timezone
+import os
+import shutil
+import subprocess
+import threading
+import time
+import uuid
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Any
 
 try:
@@ -23,8 +23,7 @@ try:
 except ImportError:
     psutil = None
 
-from video_analyzer import analyze_video, VideoAnalysisError
-
+from video_analyzer import VideoAnalysisError, analyze_video
 
 QueueDict = dict[str, Any]
 
@@ -66,7 +65,9 @@ class QueueManager:
         with self._lock:
             return sum(1 for qi in self._queue.values() if qi.get("session_code") == session_code)
 
-    def add(self, temp_id: str, temp_path: str, temp_filename: str, original_name: str, ext: str, session_code: str) -> None:
+    def add(
+        self, temp_id: str, temp_path: str, temp_filename: str, original_name: str, ext: str, session_code: str
+    ) -> None:
         with self._lock:
             self._queue[temp_id] = {
                 "temp_id": temp_id,
@@ -141,6 +142,7 @@ class QueueManager:
             session_code = item.get("session_code", "LEGACY01")
         try:
             from models import QueueItem
+
             qi = QueueItem(
                 temp_id=temp_id,
                 original_name=original_name,
@@ -160,6 +162,7 @@ class QueueManager:
     def _persist_log(self, temp_id: str, entry: dict) -> None:
         try:
             from models import QueueItem
+
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 logs = json.loads(qi.logs) if qi.logs else []
@@ -172,6 +175,7 @@ class QueueManager:
     def _persist_status(self, temp_id: str, status: str, error: str | None, result: dict | None) -> None:
         try:
             from models import QueueItem
+
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 qi.status = status
@@ -186,6 +190,7 @@ class QueueManager:
     def _delete_from_db(self, temp_id: str) -> None:
         try:
             from models import QueueItem
+
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 self.db.session.delete(qi)
@@ -196,6 +201,7 @@ class QueueManager:
     def _persist_retries(self, temp_id: str, retries: int) -> None:
         try:
             from models import QueueItem
+
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 qi.retries = retries
@@ -216,7 +222,10 @@ class QueueManager:
                 item["status"] = "queued"
                 self.app.logger.warning(
                     "Item %s failed (attempt %d/%d), retrying: %s",
-                    temp_id, retries, self._max_retries, error_msg,
+                    temp_id,
+                    retries,
+                    self._max_retries,
+                    error_msg,
                 )
             else:
                 item["status"] = "error"
@@ -233,9 +242,8 @@ class QueueManager:
     def load_from_db(self) -> None:
         try:
             from models import QueueItem
-            items = QueueItem.query.filter(
-                QueueItem.status.in_(["uploaded", "queued", "processing"])
-            ).all()
+
+            items = QueueItem.query.filter(QueueItem.status.in_(["uploaded", "queued", "processing"])).all()
             with self._lock:
                 for qi in items:
                     self._queue[qi.temp_id] = {
@@ -274,9 +282,7 @@ class QueueManager:
                 self._recover_stale_processing()
                 temp_id = None
                 with self._lock:
-                    processing = sum(
-                        1 for qi in self._queue.values() if qi["status"] == "processing"
-                    )
+                    processing = sum(1 for qi in self._queue.values() if qi["status"] == "processing")
                     if processing < 1:
                         for qi in self._queue.values():
                             if qi["status"] == "queued":
@@ -313,9 +319,7 @@ class QueueManager:
                         if "started_at" not in qi:
                             qi["started_at"] = now
                         elif now - qi["started_at"] > self._item_timeout:
-                            self.app.logger.warning(
-                                "Recovering stale processing item %s", qi["temp_id"]
-                            )
+                            self.app.logger.warning("Recovering stale processing item %s", qi["temp_id"])
                             qi["status"] = "queued"
                             qi.pop("started_at", None)
         except Exception:
@@ -331,7 +335,8 @@ class QueueManager:
                     tp = item["temp_path"]
 
                     self.log(temp_id, "size", "checking", "Validando tamaño...")
-                    if self._is_cancelled(temp_id): return
+                    if self._is_cancelled(temp_id):
+                        return
                     ok, msg = validate_file_size(tp)
                     if not ok:
                         self.log(temp_id, "size", "error", msg)
@@ -340,7 +345,8 @@ class QueueManager:
                     self.log(temp_id, "size", "ok", msg)
 
                     self.log(temp_id, "mime", "checking", "Detectando tipo MIME...")
-                    if self._is_cancelled(temp_id): return
+                    if self._is_cancelled(temp_id):
+                        return
                     ok, mime_or_msg = validate_mime_type(tp)
                     if not ok:
                         self.log(temp_id, "mime", "error", mime_or_msg)
@@ -349,7 +355,8 @@ class QueueManager:
                     self.log(temp_id, "mime", "ok", mime_or_msg)
 
                     self.log(temp_id, "clamav", "checking", "Escaneando con ClamAV...")
-                    if self._is_cancelled(temp_id): return
+                    if self._is_cancelled(temp_id):
+                        return
                     ok, clam_msg = scan_with_clamav(tp)
                     if not ok:
                         self.log(temp_id, "clamav", "error", clam_msg)
@@ -358,7 +365,8 @@ class QueueManager:
                     self.log(temp_id, "clamav", "ok", clam_msg)
 
                     self.log(temp_id, "analysis", "checking", "Analizando codecs y metadatos...")
-                    if self._is_cancelled(temp_id): return
+                    if self._is_cancelled(temp_id):
+                        return
                     analysis = analyze_video(tp)
                     if not analysis.get("valid", False):
                         for err in analysis.get("errors", []):
@@ -370,7 +378,11 @@ class QueueManager:
                     self.log(temp_id, "analysis", "ok", f"Contenedor: {analysis.get('container')}")
                     for s in analysis.get("streams", []):
                         t = "Video" if s["type"] == "video" else "Audio"
-                        d = f"{s['codec']} {s['resolution']} @ {s['fps']} fps" if s["type"] == "video" else f"{s['codec']} {s.get('channels', '?')}ch"
+                        d = (
+                            f"{s['codec']} {s['resolution']} @ {s['fps']} fps"
+                            if s["type"] == "video"
+                            else f"{s['codec']} {s.get('channels', '?')}ch"
+                        )
                         self.log(temp_id, "stream", "info", f"{t}: {d}")
 
                     self.log(temp_id, "save", "checking", "Guardando archivo...")
@@ -385,6 +397,7 @@ class QueueManager:
                     mime_val = mime_type[1] if mime_type[0] else "application/octet-stream"
 
                     from models import Video
+
                     video = Video(
                         id=video_id,
                         filename=filename,
