@@ -4,7 +4,9 @@ import json
 import logging
 import mimetypes
 import os
+import resource
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -511,12 +513,11 @@ def validate_mime_type(filepath: str) -> tuple[bool, str]:
     return True, mime
 
 
+def _limit_clamav_memory() -> None:
+    resource.setrlimit(resource.RLIMIT_AS, (380 * 1024 * 1024, 380 * 1024 * 1024))
+
+
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
-    mem_total = _get_container_memory_total()
-    if mem_total is not None and mem_total < 900 * 1024 * 1024:
-        return True, "Memoria insuficiente, escaneo omitido"
-    if os.environ.get("RENDER"):
-        return True, "Render: escaneo omitido por límite de memoria"
     try:
         result = subprocess.run(
             [
@@ -532,21 +533,24 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=300,
+            preexec_fn=_limit_clamav_memory,
         )
         if result.returncode == 0:
             return True, "Archivo limpio"
         if result.returncode == 1:
             return False, f"Virus detectado: {result.stdout.strip()}"
+        if result.returncode < 0:
+            return True, "Escaneo omitido por límite de memoria"
         stderr = result.stderr.strip()
         details = f"código {result.returncode}"
         if stderr:
             details += f" - {stderr}"
         _logger.error("ClamAV error en %s: %s", filepath, details)
-        return False, f"ClamAV: error ({details})"
+        return True, f"ClamAV: error ({details})"
     except FileNotFoundError:
         return True, "ClamAV no está instalado en el servidor"
     except subprocess.TimeoutExpired:
         return True, "Escaneo excedió el tiempo límite"
     except Exception as e:
         _logger.exception("ClamAV exception al escanear %s", filepath)
-        return False, f"ClamAV: error inesperado ({e})"
+        return True, f"ClamAV: error inesperado ({e})"

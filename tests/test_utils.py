@@ -128,14 +128,11 @@ class TestScanWithClamav:
         assert ok
         assert "excedió" in msg
 
-    @patch("services.queue.psutil")
-    def test_skip_when_low_memory(self, mock_psutil, temp_file):
-        mock_psutil.virtual_memory.return_value.total = 500 * 1024 * 1024  # 500 MB (< 900 MB)
+    @patch("services.queue.subprocess.run")
+    def test_killed_by_memory_limit(self, mock_run, temp_file):
+        mock_result = MagicMock()
+        mock_result.returncode = -9
+        mock_run.return_value = mock_result
         ok, msg = scan_with_clamav(temp_file)
         assert ok
-        assert "Memoria insuficiente" in msg
-        # subprocess.run should not be called
-        from services.queue import subprocess as sp_module
-
-        with patch.object(sp_module, "run") as mock_run:
-            mock_run.assert_not_called()
+        assert "límite de memoria" in msg

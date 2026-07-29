@@ -35,6 +35,7 @@ class Video(db.Model):
             "container": self.container,
             "mime_type": self.mime_type,
             "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
+            "clamav_result": self.clamav_result,
         }
 
 
