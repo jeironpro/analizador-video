@@ -21,5 +21,7 @@ jobs:
       - run: pip install -r test-requirements.txt
       - name: Lint Python
         run: python -m compileall . -q
+      - name: Pre-commit checks
+        run: pre-commit run --all-files --show-diff-on-failure
       - name: Test
         run: python -m pytest tests/ -v

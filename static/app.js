@@ -415,7 +415,10 @@
   }
 
   function loadQueue() {
-    queueContainer.innerHTML = queueSkeleton() + queueSkeleton();
+    const hasItems = queueContainer.querySelectorAll('.queue-item').length > 0;
+    if (!hasItems) {
+      queueContainer.innerHTML = queueSkeleton() + queueSkeleton();
+    }
     fetch('/api/queue')
       .then(r => r.json())
       .then(items => renderQueue(items))

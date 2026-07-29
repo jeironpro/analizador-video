@@ -119,6 +119,20 @@ pytest
 ruff check .
 ```
 
+### Pre-commit
+
+Los hooks se ejecutan automáticamente antes de cada commit:
+
+```bash
+pre-commit install
+```
+
+Para ejecutarlos manualmente sobre todos los archivos:
+
+```bash
+pre-commit run --all-files
+```
+
 ## Scripts
 
 | Script                          | Descripción                                        |
