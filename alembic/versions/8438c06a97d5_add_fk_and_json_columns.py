@@ -38,6 +38,10 @@ def upgrade() -> None:
     if not is_sqlite:
         op.execute("ALTER TABLE video ALTER COLUMN session_id DROP DEFAULT")
 
+    if not is_sqlite:
+        op.execute("ALTER TABLE queue_items ALTER COLUMN logs DROP DEFAULT")
+        op.execute("ALTER TABLE queue_items ALTER COLUMN result DROP DEFAULT")
+
     with op.batch_alter_table("queue_items") as batch_op:
         batch_op.alter_column("logs", type_=sa.JSON, existing_type=sa.Text, postgresql_using="logs::jsonb")
         batch_op.alter_column(
