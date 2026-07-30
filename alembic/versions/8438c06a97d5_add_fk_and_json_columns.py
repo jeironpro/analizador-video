@@ -32,7 +32,7 @@ def upgrade() -> None:
                 {"name": name},
             ).scalar()
             if not exists:
-                op.create_foreign_key(name, referent, local_cols, remote_cols, source=table)
+                op.create_foreign_key(name, table, referent, local_cols, remote_cols)
 
     _create_fk_if_not_exists("video", "fk_video_session", "sessions", ["session_id"], ["code"])
     if not is_sqlite:
