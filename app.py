@@ -99,6 +99,7 @@ def _apply_csp(response: Response) -> Response:
         "; ".join(
             [
                 "default-src 'self'",
+                "connect-src 'self'",
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
                 "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com",
                 "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
@@ -411,7 +412,7 @@ def queue_events() -> Response:
             time.sleep(1)
 
     return Response(
-        generate(),
+        stream_with_context(generate()),
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
