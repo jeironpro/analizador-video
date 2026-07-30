@@ -104,6 +104,7 @@ def _apply_csp(response: Response) -> Response:
         "; ".join(
             [
                 "default-src 'self'",
+                "img-src 'self' data:",
                 "connect-src 'self' https://cdn.jsdelivr.net",
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
                 "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com",
@@ -225,17 +226,6 @@ def _init_db() -> None:
             from alembic import command
 
             cfg = Config(alembic_cfg_path)
-
-            import sqlalchemy as sa
-
-            inspector = sa.inspect(db.engine)
-            if "alembic_version" not in inspector.get_table_names() and "video" in inspector.get_table_names():
-                app.logger.info(
-                    "Base existente sin alembic — marcando revisión %s",
-                    "8438c06a97d5",
-                )
-                command.stamp(cfg, "8438c06a97d5")
-
             command.upgrade(cfg, "head")
             app.logger.info("Migraciones Alembic ejecutadas correctamente")
     except Exception:
