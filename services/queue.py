@@ -4,9 +4,7 @@ import json
 import logging
 import mimetypes
 import os
-import resource
 import shutil
-import signal
 import subprocess
 import threading
 import time
@@ -518,16 +516,15 @@ def validate_mime_type(filepath: str) -> tuple[bool, str]:
     return True, mime
 
 
-def _limit_clamav_memory() -> None:
-    total = _get_container_memory_total()
-    if total:
-        limit = int(total * 0.85)
-    else:
-        limit = 380 * 1024 * 1024
-    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
-
-
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
+    if psutil is not None:
+        try:
+            mem = psutil.virtual_memory()
+            if mem.available < 200 * 1024 * 1024:
+                _logger.warning("Memoria disponible baja (%s), escaneo omitido", mem.available)
+                return True, "Memoria insuficiente, escaneo omitido"
+        except Exception:
+            pass
     try:
         result = subprocess.run(
             [
@@ -543,7 +540,6 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
             capture_output=True,
             text=True,
             timeout=300,
-            preexec_fn=_limit_clamav_memory,
         )
         if result.returncode == 0:
             return True, "Archivo limpio"
