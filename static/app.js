@@ -13,18 +13,23 @@
 
   const uploadInfo = document.getElementById('uploadInfo');
 
+  function updateUploadInfo(cfg) {
+    if (!uploadInfo) return;
+    uploadInfo.textContent =
+      formatSize(cfg.min_file_size) + ' \u2013 ' + formatSize(cfg.max_file_size) +
+      ' \u00B7 MP4, WebM, MKV, AVI, MOV, MPEG, WMV';
+  }
+
   function fetchConfig() {
     fetch('/api/config')
       .then(r => r.json())
       .then(cfg => {
         CFG = { ..._DEFAULTS, ...cfg };
-        if (uploadInfo) {
-          uploadInfo.textContent =
-            formatSize(CFG.min_file_size) + ' \u2013 ' + formatSize(CFG.max_file_size) +
-            ' \u00B7 MP4, WebM, MKV, AVI, MOV, MPEG, WMV';
-        }
+        updateUploadInfo(CFG);
       })
-      .catch(() => {});
+      .catch(() => {
+        updateUploadInfo(CFG);
+      });
   }
 
   // Confirm modal
@@ -521,6 +526,7 @@
   };
 
   // ───────── Init ─────────
+  updateUploadInfo(CFG);
   fetchConfig();
   loadSession();
   loadQueue();
