@@ -5,3 +5,10 @@ instance/
 .DS_Store
 .env
 *.db
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/

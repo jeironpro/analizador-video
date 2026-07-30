@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-from datetime import datetime, timezone
 from typing import Any
 
 ALLOWED_VIDEO_CODECS: set[str] = {"h264", "hevc", "vp9", "av1", "mpeg4", "png", "prores", "dnxhd", "mpeg2video"}
@@ -26,39 +25,30 @@ class VideoAnalysisError(Exception):
     pass
 
 
-def _get_container_format(filepath: str) -> str:
+def _ffprobe(filepath: str, extra_args: list[str]) -> dict[str, Any]:
     cmd = [
         "ffprobe",
         "-v",
         "quiet",
         "-print_format",
         "json",
-        "-show_format",
+        *extra_args,
         filepath,
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise VideoAnalysisError("ffprobe no pudo leer el archivo")
-    data: dict[str, Any] = json.loads(result.stdout)
+    return json.loads(result.stdout)
+
+
+def _get_container_format(filepath: str) -> str:
+    data = _ffprobe(filepath, ["-show_format"])
     format_name = data.get("format", {}).get("format_name", "")
     return format_name.split(",")[0].lower()
 
 
 def _get_streams(filepath: str) -> list[dict[str, Any]]:
-    cmd = [
-        "ffprobe",
-        "-v",
-        "quiet",
-        "-print_format",
-        "json",
-        "-show_streams",
-        "-show_format",
-        filepath,
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-    if result.returncode != 0:
-        raise VideoAnalysisError("ffprobe no pudo leer el archivo")
-    data: dict[str, Any] = json.loads(result.stdout)
+    data = _ffprobe(filepath, ["-show_streams", "-show_format"])
     return data.get("streams", [])
 
 
@@ -77,26 +67,12 @@ def analyze_video(filepath: str) -> dict[str, Any]:
 
     errors: list[str] = []
     stream_details: list[dict[str, Any]] = []
-    all_codecs: set[str] = set()
 
     for vs in video_streams:
         codec = vs.get("codec_name", "").lower()
-        all_codecs.add(codec)
         width = vs.get("width", 0) or 0
         height = vs.get("height", 0) or 0
-        r_frame_rate = vs.get("r_frame_rate", "0/1")
-        try:
-            num, den = r_frame_rate.split("/")
-            fps = float(num) / float(den) if float(den) != 0 else 0
-        except (ValueError, ZeroDivisionError):
-            fps = 0
-        if fps <= 0 or fps > 1000:
-            avg_frame_rate = vs.get("avg_frame_rate", "0/1")
-            try:
-                num, den = avg_frame_rate.split("/")
-                fps = float(num) / float(den) if float(den) != 0 else 0
-            except (ValueError, ZeroDivisionError):
-                fps = 0
+        fps = _extract_fps(vs)
 
         if codec not in ALLOWED_VIDEO_CODECS:
             errors.append(f"Códec de video no permitido: {codec}")
@@ -110,6 +86,9 @@ def analyze_video(filepath: str) -> dict[str, Any]:
             if fps < MIN_FRAME_RATE:
                 errors.append(f"FPS de video demasiado bajo: {fps}")
 
+        if codec not in CONTAINER_CODEC_MAP.get(container, set()):
+            errors.append(f"Códec {codec} no es compatible con el contenedor {container}")
+
         stream_details.append(
             {
                 "type": "video",
@@ -120,18 +99,12 @@ def analyze_video(filepath: str) -> dict[str, Any]:
             }
         )
 
-        container_allowed = CONTAINER_CODEC_MAP.get(container, set())
-        if codec not in container_allowed:
-            errors.append(f"Códec {codec} no es compatible con el contenedor {container}")
-
     for a_stream in audio_streams:
         codec = a_stream.get("codec_name", "").lower()
-        all_codecs.add(codec)
         if codec not in ALLOWED_AUDIO_CODECS:
             errors.append(f"Códec de audio no permitido: {codec}")
 
-        container_allowed = CONTAINER_CODEC_MAP.get(container, set())
-        if codec not in container_allowed:
+        if codec not in CONTAINER_CODEC_MAP.get(container, set()):
             errors.append(f"Códec {codec} no es compatible con el contenedor {container}")
 
         stream_details.append(
@@ -144,6 +117,38 @@ def analyze_video(filepath: str) -> dict[str, Any]:
             }
         )
 
+    errors.extend(_check_suspicious_metadata(streams))
+
+    if container not in ALLOWED_CONTAINERS:
+        errors.append(f"Formato de contenedor no permitido: {container}")
+
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "container": container,
+        "streams": stream_details,
+    }
+
+
+def _extract_fps(vs: dict) -> float:
+    r_frame_rate = vs.get("r_frame_rate", "0/1")
+    try:
+        num, den = r_frame_rate.split("/")
+        fps = float(num) / float(den) if float(den) != 0 else 0
+    except (ValueError, ZeroDivisionError):
+        fps = 0
+    if fps <= 0 or fps > 1000:
+        avg_frame_rate = vs.get("avg_frame_rate", "0/1")
+        try:
+            num, den = avg_frame_rate.split("/")
+            fps = float(num) / float(den) if float(den) != 0 else 0
+        except (ValueError, ZeroDivisionError):
+            fps = 0
+    return fps
+
+
+def _check_suspicious_metadata(streams: list[dict]) -> list[str]:
+    errors: list[str] = []
     for s in streams:
         tags = s.get("tags", {})
         suspicious_keys = {"encoder", "encoder-version", "software"}
@@ -153,15 +158,4 @@ def analyze_video(filepath: str) -> dict[str, Any]:
                 val = tags[key].lower().strip()
                 if "virus" in val or "malware" in val or "exploit" in val:
                     errors.append(f"Metadato sospechoso en '{key}': {tags[key]}")
-
-    if container not in ALLOWED_CONTAINERS:
-        errors.append(f"Formato de contenedor no permitido: {container}")
-
-    is_valid = len(errors) == 0
-
-    return {
-        "valid": is_valid,
-        "errors": errors,
-        "container": container,
-        "streams": stream_details,
-    }
+    return errors

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import json
+import hashlib
 import logging
-import mimetypes
 import os
 import shutil
 import subprocess
@@ -10,64 +9,21 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
 from typing import Any
 
-_logger = logging.getLogger(__name__)
+from models import QueueItem, Video
+from services.config import CLAMAV_MAX_SIZE
+from services.validation import validate_file_size, validate_mime_type
+from video_analyzer import VideoAnalysisError, analyze_video
 
-try:
-    import magic
-except ImportError:
-    magic = None
+_logger = logging.getLogger(__name__)
 
 try:
     import psutil
 except ImportError:
     psutil = None
-
-from video_analyzer import VideoAnalysisError, analyze_video  # noqa: E402
-
-
-def _read_cgroup_mem(path: str) -> int | None:
-    try:
-        with open(path) as f:
-            raw = f.read().strip()
-            val = int(raw)
-            if val > 0 and val < 2**62:
-                return val
-    except Exception:
-        pass
-    return None
-
-
-def _get_container_memory_total() -> int | None:
-    """Return total system memory in bytes, respecting cgroup limits when in a container."""  # noqa: E501
-    # Try cgroup v2 via /proc/self/cgroup to find the actual container path
-    try:
-        with open("/proc/self/cgroup") as f:
-            for line in f:
-                parts = line.strip().split(":")
-                if len(parts) == 3 and "memory" in parts[1]:
-                    cgroup_path = parts[2].lstrip("/")
-                    for base in ("/sys/fs/cgroup",):
-                        mem_max = _read_cgroup_mem(os.path.join(base, cgroup_path, "memory.max"))
-                        if mem_max is not None:
-                            return mem_max
-    except Exception:
-        pass
-    # Try root cgroup v1 and v2 paths directly
-    for path in ("/sys/fs/cgroup/memory/memory.limit_in_bytes", "/sys/fs/cgroup/memory.max"):
-        val = _read_cgroup_mem(path)
-        if val is not None:
-            return val
-    if psutil is not None:
-        try:
-            return psutil.virtual_memory().total
-        except Exception:
-            pass
-    return None
-
 
 QueueDict = dict[str, Any]
 
@@ -185,8 +141,6 @@ class QueueManager:
             temp_filename = item["temp_filename"]
             session_code = item.get("session_code", "LEGACY01")
         try:
-            from models import QueueItem
-
             qi = QueueItem(
                 temp_id=temp_id,
                 original_name=original_name,
@@ -205,36 +159,30 @@ class QueueManager:
 
     def _persist_log(self, temp_id: str, entry: dict) -> None:
         try:
-            from models import QueueItem
-
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
-                logs = json.loads(qi.logs) if qi.logs else []
+                logs = list(qi.logs) if qi.logs else []
                 logs.append(entry)
-                qi.logs = json.dumps(logs)
+                qi.logs = logs
                 self.db.session.commit()
         except Exception:
             self.db.session.rollback()
 
     def _persist_status(self, temp_id: str, status: str, error: str | None, result: dict | None) -> None:
         try:
-            from models import QueueItem
-
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 qi.status = status
                 if error is not None:
                     qi.error = error
                 if result is not None:
-                    qi.result = json.dumps(result)
+                    qi.result = result
                 self.db.session.commit()
         except Exception:
             self.db.session.rollback()
 
     def _delete_from_db(self, temp_id: str) -> None:
         try:
-            from models import QueueItem
-
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 self.db.session.delete(qi)
@@ -244,8 +192,6 @@ class QueueManager:
 
     def _persist_retries(self, temp_id: str, retries: int) -> None:
         try:
-            from models import QueueItem
-
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
                 qi.retries = retries
@@ -285,8 +231,6 @@ class QueueManager:
     # ------------------------------------------------------------------
     def load_from_db(self) -> None:
         try:
-            from models import QueueItem
-
             items = QueueItem.query.filter(QueueItem.status.in_(["uploaded", "queued", "processing"])).all()
             with self._lock:
                 for qi in items:
@@ -298,8 +242,8 @@ class QueueManager:
                         "ext": qi.ext,
                         "session_code": qi.session_id,
                         "status": qi.status,
-                        "logs": json.loads(qi.logs) if qi.logs else [],
-                        "result": json.loads(qi.result) if qi.result else None,
+                        "logs": list(qi.logs) if qi.logs else [],
+                        "result": dict(qi.result) if qi.result else None,
                         "error": qi.error,
                         "retries": qi.retries or 0,
                     }
@@ -336,6 +280,7 @@ class QueueManager:
                 if temp_id:
                     self.update_status(temp_id, "processing")
                     self._executor.submit(self._process_item, temp_id)
+                self._cleanup_done_items()
                 time.sleep(1)
         self._shutdown_cleanup()
 
@@ -354,6 +299,12 @@ class QueueManager:
     def shutdown(self) -> None:
         self._shutdown = True
 
+    def _cleanup_done_items(self) -> None:
+        with self._lock:
+            done_ids = [tid for tid, qi in self._queue.items() if qi["status"] in ("done", "error")]
+        for tid in done_ids:
+            self.remove(tid)
+
     def _recover_stale_processing(self) -> None:
         try:
             with self._lock:
@@ -369,6 +320,93 @@ class QueueManager:
         except Exception:
             pass
 
+    def _run_validation_step(
+        self, temp_id: str, tp: str, step_name: str, label: str, validate_fn: Callable[[str], tuple[bool, str]]
+    ) -> tuple[bool, str] | tuple[bool, None]:
+        self.log(temp_id, step_name, "checking", label)
+        if self._is_cancelled(temp_id):
+            return False, None
+        ok, result = validate_fn(tp)
+        if not ok:
+            self.log(temp_id, step_name, "error", result)
+            self._fail_or_retry(temp_id, result)
+            return False, None
+        self.log(temp_id, step_name, "ok", result)
+        return True, result
+
+    def _run_analysis_step(self, temp_id: str, tp: str) -> tuple[bool, dict | None]:
+        self.log(temp_id, "analysis", "checking", "Analizando codecs y metadatos...")
+        if self._is_cancelled(temp_id):
+            return False, None
+        analysis = analyze_video(tp)
+        if not analysis.get("valid", False):
+            for err in analysis.get("errors", []):
+                self.log(temp_id, "analysis", "error", err)
+            self.update_status(temp_id, "error", error="Análisis de video fallido")
+            self._fail_or_retry(temp_id, "Análisis de video fallido")
+            return False, None
+
+        self.log(temp_id, "analysis", "ok", f"Contenedor: {analysis.get('container')}")
+        for s in analysis.get("streams", []):
+            t = "Video" if s["type"] == "video" else "Audio"
+            d = (
+                f"{s['codec']} {s['resolution']} @ {s['fps']} fps"
+                if s["type"] == "video"
+                else f"{s['codec']} {s.get('channels', '?')}ch"
+            )
+            self.log(temp_id, "stream", "info", f"{t}: {d}")
+        return True, analysis
+
+    def _store_video(self, temp_id: str, tp: str, item: QueueDict, analysis: dict, clam_msg: str) -> None:
+        self.log(temp_id, "save", "checking", "Guardando archivo...")
+        video_id = str(uuid.uuid4())
+        filename = f"{video_id}{item['ext']}"
+        session_dir = os.path.join(self._upload_folder, item["session_code"])
+        os.makedirs(session_dir, exist_ok=True)
+        final_path = os.path.join(session_dir, filename)
+        shutil.move(tp, final_path)
+
+        mime_type = validate_mime_type(final_path)
+        mime_val = mime_type[1] if mime_type[0] else "application/octet-stream"
+
+        sha256 = _compute_sha256(final_path)
+
+        video = Video(
+            id=video_id,
+            filename=filename,
+            original_name=item["original_name"],
+            size=os.path.getsize(final_path),
+            container=analysis.get("container", item["ext"].lstrip(".")),
+            mime_type=mime_val,
+            analysis_result=str(analysis.get("errors", [])),
+            clamav_result=clam_msg,
+            sha256=sha256,
+            session_id=item["session_code"],
+        )
+        self.db.session.add(video)
+        self.db.session.commit()
+
+        self.log(temp_id, "save", "ok", "Video almacenado correctamente")
+        self.log(temp_id, "complete", "ok", "Proceso finalizado")
+        self.update_status(temp_id, "done", result=video.to_dict())
+
+        lines = [
+            "Resultado del procesamiento",
+            f"  Nombre      : {item['original_name']}",
+            f"  Tamaño      : {os.path.getsize(final_path) / 1024 / 1024:.1f} MB",
+            f"  Contenedor  : {analysis.get('container', '?')}",
+            f"  MIME        : {mime_val}",
+            f"  SHA-256     : {sha256}",
+            f"  ClamAV      : {clam_msg}",
+        ]
+        for s in analysis.get("streams", []):
+            if s["type"] == "video":
+                lines.append(f"  Video       : {s['codec']} {s['resolution']} @ {s['fps']} fps")
+            else:
+                lines.append(f"  Audio       : {s['codec']} {s.get('channels', '?')}ch")
+        for line in lines:
+            self.log(temp_id, "result", "info", line)
+
     def _process_item(self, temp_id: str) -> None:
         try:
             with self.app.app_context():
@@ -383,87 +421,27 @@ class QueueManager:
                         self.update_status(temp_id, "error", error="Archivo temporal no encontrado")
                         return
 
-                    self.log(temp_id, "size", "checking", "Validando tamaño...")
-                    if self._is_cancelled(temp_id):
-                        return
-                    ok, msg = validate_file_size(tp)
+                    ok, _ = self._run_validation_step(temp_id, tp, "size", "Validando tamaño...", validate_file_size)
                     if not ok:
-                        self.log(temp_id, "size", "error", msg)
-                        self._fail_or_retry(temp_id, msg)
-                        return
-                    self.log(temp_id, "size", "ok", msg)
-
-                    self.log(temp_id, "mime", "checking", "Detectando tipo MIME...")
-                    if self._is_cancelled(temp_id):
-                        return
-                    ok, mime_or_msg = validate_mime_type(tp)
-                    if not ok:
-                        self.log(temp_id, "mime", "error", mime_or_msg)
-                        self._fail_or_retry(temp_id, mime_or_msg)
-                        return
-                    self.log(temp_id, "mime", "ok", mime_or_msg)
-
-                    self.log(temp_id, "clamav", "checking", "Escaneando con ClamAV...")
-                    if self._is_cancelled(temp_id):
-                        return
-                    ok, clam_msg = scan_with_clamav(tp)
-                    if not ok:
-                        self.log(temp_id, "clamav", "error", clam_msg)
-                        self._fail_or_retry(temp_id, clam_msg)
-                        return
-                    self.log(temp_id, "clamav", "ok", clam_msg)
-
-                    self.log(temp_id, "analysis", "checking", "Analizando codecs y metadatos...")
-                    if self._is_cancelled(temp_id):
-                        return
-                    analysis = analyze_video(tp)
-                    if not analysis.get("valid", False):
-                        for err in analysis.get("errors", []):
-                            self.log(temp_id, "analysis", "error", err)
-                        self.update_status(temp_id, "error", error="Análisis de video fallido")
-                        self._fail_or_retry(temp_id, "Análisis de video fallido")
                         return
 
-                    self.log(temp_id, "analysis", "ok", f"Contenedor: {analysis.get('container')}")
-                    for s in analysis.get("streams", []):
-                        t = "Video" if s["type"] == "video" else "Audio"
-                        d = (
-                            f"{s['codec']} {s['resolution']} @ {s['fps']} fps"
-                            if s["type"] == "video"
-                            else f"{s['codec']} {s.get('channels', '?')}ch"
-                        )
-                        self.log(temp_id, "stream", "info", f"{t}: {d}")
-
-                    self.log(temp_id, "save", "checking", "Guardando archivo...")
-                    video_id = str(uuid.uuid4())
-                    filename = f"{video_id}{item['ext']}"
-                    session_dir = os.path.join(self._upload_folder, item["session_code"])
-                    os.makedirs(session_dir, exist_ok=True)
-                    final_path = os.path.join(session_dir, filename)
-                    shutil.move(tp, final_path)
-
-                    mime_type = validate_mime_type(final_path)
-                    mime_val = mime_type[1] if mime_type[0] else "application/octet-stream"
-
-                    from models import Video
-
-                    video = Video(
-                        id=video_id,
-                        filename=filename,
-                        original_name=item["original_name"],
-                        size=os.path.getsize(final_path),
-                        container=analysis.get("container", item["ext"].lstrip(".")),
-                        mime_type=mime_val,
-                        analysis_result=str(analysis.get("errors", [])),
-                        clamav_result=clam_msg,
-                        session_id=item["session_code"],
+                    ok, _ = self._run_validation_step(
+                        temp_id, tp, "mime", "Detectando tipo MIME...", validate_mime_type
                     )
-                    self.db.session.add(video)
-                    self.db.session.commit()
+                    if not ok:
+                        return
 
-                    self.log(temp_id, "save", "ok", "Video almacenado correctamente")
-                    self.log(temp_id, "complete", "ok", "Proceso finalizado")
-                    self.update_status(temp_id, "done", result=video.to_dict())
+                    ok, clam_msg = self._run_validation_step(
+                        temp_id, tp, "clamav", "Escaneando con ClamAV...", scan_with_clamav
+                    )
+                    if not ok:
+                        return
+
+                    ok, analysis = self._run_analysis_step(temp_id, tp)
+                    if not ok:
+                        return
+
+                    self._store_video(temp_id, tp, item, analysis, clam_msg)
 
                 except VideoAnalysisError as e:
                     self._fail_or_retry(temp_id, f"Error de análisis: {str(e)}")
@@ -483,37 +461,12 @@ class QueueManager:
                     qi["error"] = "Fatal error interno"
 
 
-# -----------------------------------------------------------------------
-# Utility functions (standalone, testable without Flask)
-# -----------------------------------------------------------------------
-def validate_file_size(filepath: str) -> tuple[bool, str]:
-    size = os.path.getsize(filepath)
-    if size < 50 * 1024 * 1024:
-        return False, f"Demasiado pequeño ({size / 1024 / 1024:.1f} MB). Mínimo 50 MB"
-    if size > 500 * 1024 * 1024:
-        return False, f"Demasiado grande ({size / 1024 / 1024:.1f} MB). Máximo 500 MB"
-    return True, f"{size / 1024 / 1024:.1f} MB"
-
-
-def validate_mime_type(filepath: str) -> tuple[bool, str]:
-    if magic is not None:
-        mime = magic.from_file(filepath, mime=True)
-    else:
-        mime, _ = mimetypes.guess_type(filepath)
-        mime = mime or "application/octet-stream"
-    video_mimes = {
-        "video/mp4",
-        "video/webm",
-        "video/x-matroska",
-        "video/avi",
-        "video/x-msvideo",
-        "video/quicktime",
-        "video/mpeg",
-        "video/x-ms-wmv",
-    }
-    if mime not in video_mimes:
-        return False, f"Tipo MIME no válido: {mime}"
-    return True, mime
+def _compute_sha256(filepath: str) -> str:
+    sha = hashlib.sha256()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
@@ -533,8 +486,8 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
                 "--no-summary",
                 "--quiet",
                 "--database=/var/lib/clamav",
-                "--max-filesize=200M",
-                "--max-scansize=200M",
+                f"--max-filesize={CLAMAV_MAX_SIZE // (1024 * 1024)}M",
+                f"--max-scansize={CLAMAV_MAX_SIZE // (1024 * 1024)}M",
                 filepath,
             ],
             capture_output=True,

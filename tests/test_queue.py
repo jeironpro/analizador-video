@@ -1,9 +1,6 @@
-import json
 import os
 import time
-from unittest.mock import MagicMock, PropertyMock, patch
-
-import pytest
+from unittest.mock import patch
 
 
 class TestQueueAddGetList:

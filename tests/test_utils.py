@@ -1,9 +1,7 @@
-import os
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from services.queue import scan_with_clamav, validate_file_size, validate_mime_type
+from services.queue import scan_with_clamav
+from services.validation import validate_file_size, validate_mime_type
 
 
 class TestValidateFileSize:
@@ -42,50 +40,50 @@ class TestValidateFileSize:
 
 
 class TestValidateMimeType:
-    @patch("services.queue.magic")
+    @patch("services.validation.magic")
     def test_valid_mp4(self, mock_magic, temp_file):
         mock_magic.from_file.return_value = "video/mp4"
         ok, mime = validate_mime_type(temp_file)
         assert ok
         assert mime == "video/mp4"
 
-    @patch("services.queue.magic")
+    @patch("services.validation.magic")
     def test_valid_webm(self, mock_magic, temp_file):
         mock_magic.from_file.return_value = "video/webm"
         ok, mime = validate_mime_type(temp_file)
         assert ok
         assert mime == "video/webm"
 
-    @patch("services.queue.magic")
+    @patch("services.validation.magic")
     def test_valid_mkv(self, mock_magic, temp_file):
         mock_magic.from_file.return_value = "video/x-matroska"
         ok, mime = validate_mime_type(temp_file)
         assert ok
 
-    @patch("services.queue.magic")
+    @patch("services.validation.magic")
     def test_valid_mov(self, mock_magic, temp_file):
         mock_magic.from_file.return_value = "video/quicktime"
         ok, mime = validate_mime_type(temp_file)
         assert ok
 
-    @patch("services.queue.magic")
+    @patch("services.validation.magic")
     def test_invalid_mime(self, mock_magic, temp_file):
         mock_magic.from_file.return_value = "application/pdf"
         ok, msg = validate_mime_type(temp_file)
         assert not ok
         assert "no válido" in msg
 
-    @patch("services.queue.magic", None)
+    @patch("services.validation.magic", None)
     def test_fallback_when_magic_missing(self, temp_file):
-        with patch("services.queue.mimetypes") as mock_mimetypes:
+        with patch("services.validation.mimetypes") as mock_mimetypes:
             mock_mimetypes.guess_type.return_value = ("video/mp4", None)
             ok, mime = validate_mime_type(temp_file)
             assert ok
             assert mime == "video/mp4"
 
-    @patch("services.queue.magic", None)
+    @patch("services.validation.magic", None)
     def test_invalid_when_magic_missing_and_unknown(self, temp_file):
-        with patch("services.queue.mimetypes") as mock_mimetypes:
+        with patch("services.validation.mimetypes") as mock_mimetypes:
             mock_mimetypes.guess_type.return_value = (None, None)
             ok, msg = validate_mime_type(temp_file)
             assert not ok

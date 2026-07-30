@@ -4,15 +4,13 @@ import json
 import logging
 import os
 import secrets
-import shutil
 import signal
 import string
 import sys
-import threading
 import time
 import uuid
-from datetime import UTC, datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from flask import (
     Flask,
@@ -29,7 +27,11 @@ from werkzeug.utils import secure_filename
 
 from models import Session, Video, db
 from services.cleanup import CleanupDaemon
-from services.queue import QueueManager, validate_file_size, validate_mime_type
+from services.config import ALLOWED_EXTENSIONS, MAX_CONTENT_LENGTH
+from services.queue import QueueManager
+from services.rate_limiter import RateLimiter
+from services.sse import sse_complete, sse_error, sse_step
+from services.validation import validate_mime_type
 
 app = Flask(__name__)
 
@@ -73,17 +75,39 @@ if database_url.startswith("postgres") and "sslmode" not in database_url:
     database_url += "?sslmode=require" if "?" not in database_url else "&sslmode=require"
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, "pool_recycle": 300}
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 base_dir = os.environ.get("UPLOAD_DIR", "/data" if os.environ.get("RENDER") else app.instance_path)
 app.config["UPLOAD_FOLDER"] = os.path.join(base_dir, "uploads")
 app.config["TEMP_FOLDER"] = os.path.join(base_dir, "temp")
-app.secret_key = os.environ.get("SECRET_KEY", os.urandom(24).hex())
+secret_key = os.environ.get("SECRET_KEY")
+if not secret_key:
+    app.logger.warning("SECRET_KEY no configurada — usando clave aleatoria. Las sesiones se invalidarán al reiniciar.")
+    secret_key = os.urandom(24).hex()
+app.secret_key = secret_key
 app.config["DEBUG"] = os.environ.get("RENDER") != "true"
 app.config["SESSION_DAYS"] = int(os.environ.get("SESSION_DAYS", "7"))
 app.config["ITEM_TIMEOUT"] = int(os.environ.get("ITEM_TIMEOUT", "600"))
 app.config["MAX_RETRIES"] = int(os.environ.get("MAX_RETRIES", "3"))
 app.config["MAX_QUEUE_ITEMS"] = int(os.environ.get("MAX_QUEUE_ITEMS", "20"))
+
+
+@app.after_request
+def _apply_csp(response: Response) -> Response:
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "; ".join(
+            [
+                "default-src 'self'",
+                "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
+                "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com",
+                "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
+            ]
+        ),
+    )
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    return response
+
 
 try:
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
@@ -109,33 +133,6 @@ def _handle_sigterm(signum: int, frame: Any) -> None:
 
 signal.signal(signal.SIGTERM, _handle_sigterm)
 signal.signal(signal.SIGINT, _handle_sigterm)
-
-
-# ---------------------------------------------------------------------------
-# Rate limiter (per-session sliding window)
-# ---------------------------------------------------------------------------
-class RateLimiter:
-    def __init__(self, limit: int = 10, window: int = 60) -> None:
-        self.limit = limit
-        self.window = window
-        self._buckets: dict[str, list[float]] = {}
-        self._lock = threading.Lock()
-
-    def is_allowed(self, key: str) -> bool:
-        now = time.time()
-        with self._lock:
-            timestamps = self._buckets.get(key, [])
-            timestamps = [t for t in timestamps if now - t < self.window]
-            if len(timestamps) >= self.limit:
-                return False
-            timestamps.append(now)
-            self._buckets[key] = timestamps
-            return True
-
-    def cleanup(self) -> None:
-        now = time.time()
-        with self._lock:
-            self._buckets = {k: [t for t in ts if now - t < self.window] for k, ts in self._buckets.items()}
 
 
 _upload_limiter = RateLimiter(
@@ -172,8 +169,6 @@ def _validate_config() -> None:
         app.logger.warning("Variables de entorno faltantes: %s", missing)
 
 
-_db_initialized = False
-
 SESSION_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
@@ -209,119 +204,22 @@ def _session_required() -> str | None:
 
 
 def _init_db() -> None:
-    global _db_initialized
-    if _db_initialized:
-        return
     try:
         with app.app_context():
-            _run_alembic_migrations()
-            _migrate_sessions()
-        _db_initialized = True
-    except Exception as e:
-        app.logger.warning("No se pudo conectar a la base de datos: %s", e)
-        try:
-            with app.app_context():
-                db.create_all()
-                _migrate_schema()
-                _migrate_sessions()
-            _db_initialized = True
-        except Exception as e2:
-            app.logger.warning("Fallback db.create_all también falló: %s", e2)
+            alembic_cfg_path = os.path.join(os.path.dirname(__file__), "alembic.ini")
+            from alembic.config import Config
 
+            from alembic import command
 
-def _run_alembic_migrations() -> None:
-    alembic_cfg_path = os.path.join(os.path.dirname(__file__), "alembic.ini")
-    if not os.path.exists(alembic_cfg_path):
-        app.logger.info("alembic.ini no encontrado, usando db.create_all")
-        raise FileNotFoundError("alembic.ini not found")
-    try:
-        from alembic.config import Config
-
-        from alembic import command
-
-        cfg = Config(alembic_cfg_path)
-        command.upgrade(cfg, "head")
+            cfg = Config(alembic_cfg_path)
+            command.upgrade(cfg, "head")
         app.logger.info("Migraciones Alembic ejecutadas correctamente")
     except Exception as e:
-        app.logger.warning("Error ejecutando migraciones Alembic: %s", e)
-        raise
-
-
-def _migrate_schema() -> None:
-    engine = db.engine
-    inspector = db.inspect(engine)
-    if inspector.has_table("video"):
-        cols = {c["name"] for c in inspector.get_columns("video")}
-        video_cols = {
-            "id": "VARCHAR(36)",
-            "filename": "VARCHAR(255)",
-            "original_name": "VARCHAR(255)",
-            "size": "INTEGER",
-            "container": "VARCHAR(20)",
-            "mime_type": "VARCHAR(100)",
-            "analysis_result": "TEXT",
-            "clamav_result": "VARCHAR(50)",
-            "uploaded_at": "TIMESTAMP",
-            "session_id": "VARCHAR(8)",
-        }
-        with engine.connect() as conn:
-            trans = conn.begin()
-            try:
-                for name, raw_type in video_cols.items():
-                    if name not in cols:
-                        col = Video.__table__.columns.get(name)
-                        nullable = "NULL" if col is None or col.nullable else "NOT NULL"
-                        conn.execute(db.text(f"ALTER TABLE video ADD COLUMN {name} {raw_type} {nullable}"))
-                trans.commit()
-            except Exception:
-                trans.rollback()
-    if inspector.has_table("queue_items"):
-        qcols = {c["name"] for c in inspector.get_columns("queue_items")}
-        if "session_id" not in qcols:
-            try:
-                with engine.connect() as conn:
-                    conn.execute(db.text("ALTER TABLE queue_items ADD COLUMN session_id VARCHAR(8)"))
-                    conn.commit()
-            except Exception:
-                pass
-
-
-def _migrate_sessions() -> None:
-    from models import QueueItem
-
-    has_legacy = db.session.query(Video).filter(Video.session_id.is_(None)).count() > 0
-    if not has_legacy:
-        return
-    legacy = Session(code="LEGACY01")
-    db.session.add(legacy)
-    Video.query.filter(Video.session_id.is_(None)).update({"session_id": "LEGACY01"})
-    QueueItem.query.filter(QueueItem.session_id.is_(None)).update({"session_id": "LEGACY01"})
-    legacy_dir = os.path.join(app.config["UPLOAD_FOLDER"], "LEGACY01")
-    os.makedirs(legacy_dir, exist_ok=True)
-    for f in os.listdir(app.config["UPLOAD_FOLDER"]):
-        fpath = os.path.join(app.config["UPLOAD_FOLDER"], f)
-        if os.path.isfile(fpath):
-            shutil.move(fpath, os.path.join(legacy_dir, f))
-    db.session.commit()
+        app.logger.warning("No se pudo conectar a la base de datos: %s", e)
 
 
 _init_db()
 _validate_config()
-
-
-# ---------------------------------------------------------------------------
-# SSE helpers
-# ---------------------------------------------------------------------------
-def _sse_step(step: str, status: str, message: str) -> str:
-    return f"event: step\ndata: {json.dumps({'step': step, 'status': status, 'message': message})}\n\n"
-
-
-def _sse_complete(data: Any) -> str:
-    return f"event: complete\ndata: {json.dumps(data)}\n\n"
-
-
-def _sse_error(message: str) -> str:
-    return f"event: error\ndata: {json.dumps({'message': message})}\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -408,6 +306,29 @@ def health() -> tuple[Response, int]:
     return jsonify({"status": "ok" if ok else "db_error"}), 200 if ok else 503
 
 
+@app.route("/api/config", methods=["GET"])
+def config_api() -> tuple[Response, int]:
+    from services.config import (
+        ALLOWED_EXTENSIONS,
+        ALLOWED_MIMES,
+        MAX_FILE_SIZE,
+        MAX_QUEUE_ITEMS,
+        MAX_RETRIES,
+        MIN_FILE_SIZE,
+    )
+
+    return jsonify(
+        {
+            "min_file_size": MIN_FILE_SIZE,
+            "max_file_size": MAX_FILE_SIZE,
+            "allowed_extensions": sorted(ALLOWED_EXTENSIONS),
+            "allowed_mimes": sorted(ALLOWED_MIMES),
+            "max_retries": MAX_RETRIES,
+            "max_queue_items": MAX_QUEUE_ITEMS,
+        }
+    ), 200
+
+
 # ---------------------------------------------------------------------------
 # API routes (all require valid session)
 # ---------------------------------------------------------------------------
@@ -445,8 +366,7 @@ def upload() -> tuple[Response, int]:
     if file.filename == "":
         return jsonify({"error": "Nombre de archivo vacío"}), 400
     ext = os.path.splitext(file.filename)[1].lower()
-    video_exts = {".mp4", ".webm", ".mkv", ".avi", ".mov", ".mpeg", ".wmv"}
-    if ext not in video_exts:
+    if ext not in ALLOWED_EXTENSIONS:
         return jsonify({"error": f"Extensión no permitida: {ext}"}), 400
 
     temp_id = str(uuid.uuid4())
@@ -521,17 +441,17 @@ def queue_stream(temp_id: str) -> Response:
         while True:
             item = queue.get(temp_id)
             if not item:
-                yield _sse_error("Item no encontrado en la cola")
+                yield sse_error("Item no encontrado en la cola")
                 return
             while last_count < len(item["logs"]):
                 log = item["logs"][last_count]
-                yield _sse_step(log["step"], log["status"], log["message"])
+                yield sse_step(log["step"], log["status"], log["message"])
                 last_count += 1
             if item["status"] == "done":
-                yield _sse_complete({"video": item["result"]})
+                yield sse_complete({"video": item["result"]})
                 return
             if item["status"] in ("error", "cancelled"):
-                yield _sse_error(item["error"] or "Error desconocido")
+                yield sse_error(item["error"] or "Error desconocido")
                 return
             time.sleep(0.5)
 

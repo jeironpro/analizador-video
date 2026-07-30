@@ -23,4 +23,4 @@ if m:
         print('PostgreSQL not available after 30s')
 "
 
-exec gunicorn app:app --bind 0.0.0.0:"$PORT" --timeout 300 --worker-class gevent --workers 1
+exec gunicorn app:app --bind 0.0.0.0:"${PORT}" --timeout 300 --worker-class sync --workers 1

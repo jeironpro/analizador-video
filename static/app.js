@@ -4,9 +4,28 @@
   const progressBar = document.getElementById('progressBar');
   const progressFill = document.getElementById('progressFill');
 
-  const MAX_FILE_SIZE = 500 * 1024 * 1024;
-  const MIN_FILE_SIZE = 50 * 1024 * 1024;
-  const MAX_RETRIES = 3;
+  const _DEFAULTS = {
+    max_file_size: 500 * 1024 * 1024,
+    min_file_size: 50 * 1024 * 1024,
+    max_retries: 3,
+  };
+  let CFG = { ..._DEFAULTS };
+
+  const uploadInfo = document.getElementById('uploadInfo');
+
+  function fetchConfig() {
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(cfg => {
+        CFG = { ..._DEFAULTS, ...cfg };
+        if (uploadInfo) {
+          uploadInfo.textContent =
+            formatSize(CFG.min_file_size) + ' \u2013 ' + formatSize(CFG.max_file_size) +
+            ' \u00B7 MP4, WebM, MKV, AVI, MOV, MPEG, WMV';
+        }
+      })
+      .catch(() => {});
+  }
 
   // Confirm modal
   const confirmModal = new bootstrap.Modal('#confirmModal');
@@ -175,8 +194,8 @@
   function uploadWithRetry(file, retries) {
     retries = retries || 0;
     return uploadFile(file, retries).catch(err => {
-      if (retries < MAX_RETRIES) {
-        showToast('Reintentando "' + file.name + '" (' + (retries + 1) + '/' + MAX_RETRIES + '): ' + err, 'warning');
+      if (retries < CFG.max_retries) {
+        showToast('Reintentando "' + file.name + '" (' + (retries + 1) + '/' + CFG.max_retries + '): ' + err, 'warning');
         return uploadWithRetry(file, retries + 1);
       }
       showToast('Error al subir "' + file.name + '": ' + err, 'error');
@@ -187,12 +206,12 @@
   async function handleFiles(files) {
     const valid = [];
     for (const f of files) {
-      if (f.size < MIN_FILE_SIZE) {
-        showToast('"' + f.name + '" es demasiado pequeño (' + formatSize(f.size) + '). Mínimo 50 MB', 'warning');
+      if (f.size < CFG.min_file_size) {
+        showToast('"' + f.name + '" es demasiado pequeño (' + formatSize(f.size) + '). Mínimo ' + formatSize(CFG.min_file_size), 'warning');
         continue;
       }
-      if (f.size > MAX_FILE_SIZE) {
-        showToast('"' + f.name + '" es demasiado grande (' + formatSize(f.size) + '). Máximo 500 MB', 'warning');
+      if (f.size > CFG.max_file_size) {
+        showToast('"' + f.name + '" es demasiado grande (' + formatSize(f.size) + '). Máximo ' + formatSize(CFG.max_file_size), 'warning');
         continue;
       }
       valid.push(f);
@@ -307,7 +326,7 @@
     else if (type === 'error') line.classList.add('error');
     else if (type === 'info') line.classList.add('info');
     else if (type === 'checking') line.classList.add('checking');
-    else if (type === 'complete') line.classList.add('complete');
+    else if (type === 'result') line.classList.add('result');
     const ts = document.createElement('span');
     ts.className = 'timestamp';
     ts.textContent = new Date().toLocaleTimeString('es-ES');
@@ -447,9 +466,12 @@
             </div>
             <span class="badge bg-light text-dark border flex-shrink-0">${escapeHtml(ext.toUpperCase())}</span>
           </div>
-          <div class="d-flex gap-2 mb-2">
+          <div class="d-flex gap-2 mb-2 flex-wrap">
             <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${formatSize(v.size)}</span>
+            ${v.mime_type ? '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25">' + escapeHtml(v.mime_type) + '</span>' : ''}
+            ${v.clamav_result === 'Archivo limpio' ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25"><i class="bi bi-shield-check"></i> Seguro</span>' : (v.clamav_result ? '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" title="' + escapeHtml(v.clamav_result) + '"><i class="bi bi-shield-exclamation"></i> ' + escapeHtml(v.clamav_result) + '</span>' : '')}
           </div>
+          ${v.sha256 ? '<p class="small mb-1 text-muted" style="word-break:break-all;font-size:.7rem"><i class="bi bi-fingerprint"></i> ' + escapeHtml(v.sha256) + '</p>' : ''}
           <p class="text-muted small mb-2">${formatDate(v.uploaded_at)}</p>
           <div class="d-flex gap-2">
             <a href="/api/download/${v.id}" class="btn btn-sm btn-outline-success"><i class="bi bi-download"></i> Descargar</a>
@@ -499,6 +521,7 @@
   };
 
   // ───────── Init ─────────
+  fetchConfig();
   loadSession();
   loadQueue();
   loadVideos();

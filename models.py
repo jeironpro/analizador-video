@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 
 from flask_sqlalchemy import SQLAlchemy
 
@@ -24,8 +24,9 @@ class Video(db.Model):
     mime_type = db.Column(db.String(100))
     analysis_result = db.Column(db.Text)
     clamav_result = db.Column(db.String(50))
+    sha256 = db.Column(db.String(64))
     uploaded_at = db.Column(db.DateTime, default=lambda: datetime.now(UTC))
-    session_id = db.Column(db.String(8), nullable=False, default="LEGACY01")
+    session_id = db.Column(db.String(8), db.ForeignKey("sessions.code"), nullable=False)
 
     def to_dict(self) -> dict:
         return {
@@ -36,6 +37,7 @@ class Video(db.Model):
             "mime_type": self.mime_type,
             "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
             "clamav_result": self.clamav_result,
+            "sha256": self.sha256,
         }
 
 
@@ -47,9 +49,9 @@ class QueueItem(db.Model):
     temp_path = db.Column(db.String(500), nullable=False)
     temp_filename = db.Column(db.String(500), nullable=False)
     status = db.Column(db.String(20), default="uploaded")
-    logs = db.Column(db.Text, default="[]")
+    logs = db.Column(db.JSON, default=list)
     error = db.Column(db.Text)
-    result = db.Column(db.Text)
+    result = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=lambda: datetime.now(UTC))
-    session_id = db.Column(db.String(8), nullable=False, default="LEGACY01")
+    session_id = db.Column(db.String(8), db.ForeignKey("sessions.code"), nullable=False)
     retries = db.Column(db.Integer, default=0)

@@ -6,7 +6,7 @@ Aplicación web para escanear, validar y almacenar archivos de video. Utiliza Cl
 
 | Componente       | Tecnología                                   |
 |------------------|----------------------------------------------|
-| Backend          | Flask + Gevent                               |
+| Backend          | Flask + Gunicorn (sync worker)               |
 | Base de datos    | PostgreSQL / SQLite (local)                  |
 | Contenedor       | Docker (Render) + docker-compose (local)     |
 | Análisis         | ffprobe (ffmpeg)                             |
@@ -26,6 +26,9 @@ Aplicación web para escanear, validar y almacenar archivos de video. Utiliza Cl
 - Reintento automático de items fallidos (configurable, default 3)
 - Recuperación automática de items "stuck" en processing (timeout configurable)
 - Detección de metadatos sospechosos
+- Cálculo de hash SHA-256 por cada video almacenado
+- Resultado formateado como bloque clave:valor en el terminal al finalizar
+- Limpieza automática de items `done`/`error` de la cola
 - Streaming de logs en tiempo real por SSE por cada item
 - Actualización de la cola en vivo vía SSE global (sin polling)
 - Limitación de tasa en upload (sliding window, default 20 req / 60s)
@@ -41,14 +44,15 @@ Aplicación web para escanear, validar y almacenar archivos de video. Utiliza Cl
 
 ## Arquitectura
 
-```
+```uml
                      ┌─────────────┐
                      │  Navegador  │
                      └──────┬──────┘
                             │ SSE / REST
                      ┌──────┴──────┐
                      │   Flask +   │
-                     │  Gevent (1) │─── CleanupDaemon (cada 1h)
+                     │ Gunicorn 1  │─── CleanupDaemon (cada 1h)
+                     │ sync worker │
                      └──────┬──────┘
                             │
            ┌────────────────┼────────────────┬─────────────────┐
@@ -73,19 +77,19 @@ Aplicación web para escanear, validar y almacenar archivos de video. Utiliza Cl
 
 ### Variables de entorno
 
-| Variable             | Obligatorio | Default       | Descripción                                  |
-|----------------------|-------------|---------------|----------------------------------------------|
-| `DATABASE_URL`       | Sí          | `sqlite:///videos.db` | Conexión a PostgreSQL              |
-| `SECRET_KEY`         | No          | Auto-generado | Clave secreta de Flask                       |
-| `UPLOAD_DIR`         | No          | `/data`       | Directorio base para uploads y temp          |
-| `SESSION_DAYS`       | No          | `7`           | Días antes de expirar sesión inactiva        |
-| `ITEM_TIMEOUT`       | No          | `600`         | Segundos antes de recuperar item "stuck"     |
-| `MAX_RETRIES`        | No          | `3`           | Reintentos máximos por item fallido          |
-| `MAX_QUEUE_ITEMS`    | No          | `20`          | Máximo de items en cola por sesión           |
-| `RATE_LIMIT_UPLOAD`  | No          | `20`          | Máximo de uploads por ventana                |
-| `RATE_LIMIT_WINDOW`  | No          | `60`          | Ventana de rate limiting (segundos)          |
-| `LOG_FORMAT`         | No          | `text`        | `json` para logging estructurado             |
-| `RENDER`             | No          | —             | Se define automáticamente en Render          |
+| Variable             | Obligatorio | Default               | Descripción                                  |
+|----------------------|-------------|-----------------------|----------------------------------------------|
+| `DATABASE_URL`       | Sí          | `sqlite:///videos.db` | Conexión a PostgreSQL                        |
+| `SECRET_KEY`         | No          | Auto-generado         | Clave secreta de Flask                       |
+| `UPLOAD_DIR`         | No          | `/data`               | Directorio base para uploads y temp          |
+| `SESSION_DAYS`       | No          | `7`                   | Días antes de expirar sesión inactiva        |
+| `ITEM_TIMEOUT`       | No          | `600`                 | Segundos antes de recuperar item "stuck"     |
+| `MAX_RETRIES`        | No          | `3`                   | Reintentos máximos por item fallido          |
+| `MAX_QUEUE_ITEMS`    | No          | `20`                  | Máximo de items en cola por sesión           |
+| `RATE_LIMIT_UPLOAD`  | No          | `20`                  | Máximo de uploads por ventana                |
+| `RATE_LIMIT_WINDOW`  | No          | `60`                  | Ventana de rate limiting (segundos)          |
+| `LOG_FORMAT`         | No          | `text`                | `json` para logging estructurado             |
+| `RENDER`             | No          | —                     | Se define automáticamente en Render          |
 
 ## Desarrollo local
 

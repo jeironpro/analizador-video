@@ -19,10 +19,6 @@ body {
   flex: 1;
   overflow-y: auto;
 }
-.min-h-0 {
-  min-height: 0;
-}
-
 /* Cards */
 .card-custom {
   background: #fff;
@@ -118,7 +114,7 @@ body {
   color: #e6edf3;
   border-radius: 8px;
   padding: 10px 12px;
-  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-family: 'Courier New', monospace;
   font-size: .75rem;
   line-height: 1.6;
   max-height: 200px;
@@ -133,6 +129,7 @@ body {
 .terminal .line.info { color: #79c0ff; }
 .terminal .line.checking { color: #d29922; }
 .terminal .line.complete { color: #3fb950; font-weight: 700; }
+.terminal .line.result { color: #79c0ff; font-weight: 500; }
 .terminal .timestamp {
   color: rgba(255,255,255,.25);
   margin-right: 10px;
@@ -156,14 +153,6 @@ body {
   font-weight: 600;
   font-size: .9rem;
   color: #0f172a;
-}
-
-/* Buttons */
-.btn-sm-custom {
-  font-size: .8rem;
-  padding: .3rem .75rem;
-  border-radius: 6px;
-  font-weight: 500;
 }
 
 /* Empty state */
