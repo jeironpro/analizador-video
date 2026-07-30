@@ -519,7 +519,12 @@ def validate_mime_type(filepath: str) -> tuple[bool, str]:
 
 
 def _limit_clamav_memory() -> None:
-    resource.setrlimit(resource.RLIMIT_AS, (380 * 1024 * 1024, 380 * 1024 * 1024))
+    total = _get_container_memory_total()
+    if total:
+        limit = int(total * 0.85)
+    else:
+        limit = 380 * 1024 * 1024
+    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
 
 def scan_with_clamav(filepath: str) -> tuple[bool, str]:
