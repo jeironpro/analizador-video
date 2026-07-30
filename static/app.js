@@ -440,13 +440,17 @@
 
   function loadQueue() {
     const hasItems = queueContainer.querySelectorAll('.queue-item').length > 0;
-    if (!hasItems) {
-      queueContainer.innerHTML = queueSkeleton() + queueSkeleton();
-    }
     fetch('/api/queue')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(r.status + '');
+        return r.json();
+      })
       .then(items => renderQueue(items))
-      .catch(() => {});
+      .catch(() => {
+        if (!hasItems) {
+          queueContainer.innerHTML = '<p class="text-muted small text-center py-3 mb-0">Sin conexión</p>';
+        }
+      });
   }
 
   // ───────── Videos ─────────
@@ -509,9 +513,14 @@
   function loadVideos() {
     videoContainer.innerHTML = '<div class="video-grid">' + videoGridSkeleton() + '</div>';
     fetch('/api/videos')
-      .then(r => r.json())
+      .then(r => {
+        if (!r.ok) throw new Error(r.status + '');
+        return r.json();
+      })
       .then(videos => renderVideos(videos))
-      .catch(() => {});
+      .catch(() => {
+        videoContainer.innerHTML = '<div class="empty-state"><i class="bi bi-film"></i><p class="mb-0">No hay videos almacenados</p></div>';
+      });
   }
 
   window._deleteVideo = async function (id) {
