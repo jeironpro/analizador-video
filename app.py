@@ -247,7 +247,9 @@ def index() -> Response:
         if sess:
             sess.last_active = datetime.now(UTC)
             db.session.commit()
-            return redirect(f"/s/{code}/")
+            resp = redirect(f"/s/{code}/")
+            resp.set_cookie("session_code", code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
+            return resp
     code = _create_session()
     resp = redirect(f"/s/{code}/")
     resp.set_cookie("session_code", code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
@@ -261,7 +263,10 @@ def session_view(code: str) -> Response:
     sess = db.session.get(Session, code)
     if not sess:
         app.logger.info("Session code %s not found, creating new session", code)
-        return redirect("/")
+        new_code = _create_session()
+        resp = redirect(f"/s/{new_code}/")
+        resp.set_cookie("session_code", new_code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
+        return resp
     sess.last_active = datetime.now(UTC)
     db.session.commit()
     resp = make_response(render_template("index.html"))

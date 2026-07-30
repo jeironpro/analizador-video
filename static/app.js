@@ -32,10 +32,53 @@
       });
   }
 
-  // Confirm modal
-  const confirmModal = new bootstrap.Modal('#confirmModal');
+  // ───────── Modals (lazy-init in case bootstrap CDN is slow/missing) ─────────
   const confirmMessage = document.getElementById('confirmMessage');
   const confirmOk = document.getElementById('confirmOk');
+
+  function _modal(id) { return new bootstrap.Modal('#' + id); }
+
+  // Confirm modal
+  function showConfirm(message) {
+    return new Promise(resolve => {
+      const modal = _modal('confirmModal');
+      confirmMessage.textContent = message;
+      const cancelBtn = document.querySelector('#confirmModal [data-bs-dismiss="modal"]');
+      const modalEl = document.getElementById('confirmModal');
+      confirmOk.addEventListener('click', okHandler);
+      cancelBtn.addEventListener('click', cancelHandler);
+      modalEl.addEventListener('hidden.bs.modal', hideHandler);
+      modal.show();
+      function cleanup() {
+        confirmOk.removeEventListener('click', okHandler);
+        cancelBtn.removeEventListener('click', cancelHandler);
+        modalEl.removeEventListener('hidden.bs.modal', hideHandler);
+      }
+      function okHandler() { cleanup(); modal.hide(); resolve(true); }
+      function cancelHandler() { cleanup(); resolve(false); }
+      function hideHandler() { cleanup(); resolve(false); }
+    });
+  }
+
+  window.mostrarInfo = function () { _modal('infoModal').show(); };
+
+  // Join session modal
+  window.unirseSesion = function () { _modal('joinModal').show(); };
+  const joinInput = document.getElementById('joinCodeInput');
+  document.getElementById('joinOk').addEventListener('click', () => {
+    const code = joinInput.value.trim().toUpperCase();
+    if (code.length === 8) {
+      _modal('joinModal').hide();
+      window.location.href = '/s/' + code + '/';
+    }
+  });
+  joinInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('joinOk').click();
+  });
+  joinInput.addEventListener('input', () => {
+    joinInput.value = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  });
+  document.getElementById('joinModal').addEventListener('hidden.bs.modal', () => { joinInput.value = ''; });
 
   const toastContainer = document.getElementById('toastContainer');
 
@@ -52,45 +95,6 @@
       setTimeout(() => el.remove(), 300);
     }, 4000);
   }
-
-  function showConfirm(msg) {
-    return new Promise(resolve => {
-      confirmMessage.textContent = msg;
-      confirmOk.addEventListener('click', okHandler);
-      document.querySelector('#confirmModal [data-bs-dismiss="modal"]').addEventListener('click', cancelHandler);
-      document.getElementById('confirmModal').addEventListener('hidden.bs.modal', hideHandler);
-      confirmModal.show();
-      function cleanup() {
-        confirmOk.removeEventListener('click', okHandler);
-        document.querySelector('#confirmModal [data-bs-dismiss="modal"]').removeEventListener('click', cancelHandler);
-        document.getElementById('confirmModal').removeEventListener('hidden.bs.modal', hideHandler);
-      }
-      function okHandler() { cleanup(); confirmModal.hide(); resolve(true); }
-      function cancelHandler() { cleanup(); resolve(false); }
-      function hideHandler() { cleanup(); resolve(false); }
-    });
-  }
-
-  const infoModal = new bootstrap.Modal('#infoModal');
-  window.mostrarInfo = function () { infoModal.show(); };
-
-  // Join session modal
-  const joinModal = new bootstrap.Modal('#joinModal');
-  const joinInput = document.getElementById('joinCodeInput');
-  document.getElementById('joinOk').addEventListener('click', () => {
-    const code = joinInput.value.trim().toUpperCase();
-    if (code.length === 8) {
-      joinModal.hide();
-      window.location.href = '/s/' + code + '/';
-    }
-  });
-  joinInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') document.getElementById('joinOk').click();
-  });
-  joinInput.addEventListener('input', () => {
-    joinInput.value = joinInput.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  });
-  joinModal._element.addEventListener('hidden.bs.modal', () => { joinInput.value = ''; });
 
   const queueCard = document.getElementById('queueCard');
   const queueContainer = document.getElementById('queueContainer');
@@ -135,8 +139,6 @@
       })
       .catch(() => {});
   }
-
-  window.unirseSesion = function () { joinModal.show(); };
 
   window.copiarEnlace = function () {
     const url = window.location.href;
