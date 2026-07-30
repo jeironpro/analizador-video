@@ -71,6 +71,11 @@ if os.environ.get("LOG_FORMAT", "json" if os.environ.get("RENDER") else "text").
     logging.getLogger("werkzeug").propagate = True
 
 database_url = os.environ.get("DATABASE_URL", "sqlite:///videos.db")
+if database_url.startswith("sqlite:///") and not database_url.startswith("sqlite:////"):
+    _db_path = database_url[len("sqlite:///") :]
+    if not os.path.isabs(_db_path):
+        _db_path = os.path.abspath(os.path.join(app.instance_path, _db_path))
+        database_url = f"sqlite:///{_db_path}"
 if database_url.startswith("postgres") and "sslmode" not in database_url:
     database_url += "?sslmode=require" if "?" not in database_url else "&sslmode=require"
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
@@ -99,7 +104,7 @@ def _apply_csp(response: Response) -> Response:
         "; ".join(
             [
                 "default-src 'self'",
-                "connect-src 'self'",
+                "connect-src 'self' https://cdn.jsdelivr.net",
                 "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com",
                 "font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com",
                 "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net",
@@ -204,7 +209,14 @@ def _session_required() -> str | None:
     return None
 
 
+_init_db_guard = False
+
+
 def _init_db() -> None:
+    global _init_db_guard
+    if _init_db_guard:
+        return
+    _init_db_guard = True
     try:
         with app.app_context():
             alembic_cfg_path = os.path.join(os.path.dirname(__file__), "alembic.ini")
@@ -213,10 +225,21 @@ def _init_db() -> None:
             from alembic import command
 
             cfg = Config(alembic_cfg_path)
+
+            import sqlalchemy as sa
+
+            inspector = sa.inspect(db.engine)
+            if "alembic_version" not in inspector.get_table_names() and "video" in inspector.get_table_names():
+                app.logger.info(
+                    "Base existente sin alembic — marcando revisión %s",
+                    "8438c06a97d5",
+                )
+                command.stamp(cfg, "8438c06a97d5")
+
             command.upgrade(cfg, "head")
-        app.logger.info("Migraciones Alembic ejecutadas correctamente")
-    except Exception as e:
-        app.logger.warning("No se pudo conectar a la base de datos: %s", e)
+            app.logger.info("Migraciones Alembic ejecutadas correctamente")
+    except Exception:
+        app.logger.exception("No se pudieron aplicar migraciones Alembic")
 
 
 _init_db()

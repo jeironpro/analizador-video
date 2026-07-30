@@ -22,38 +22,36 @@ def upgrade() -> None:
     conn = op.get_bind()
     is_sqlite = conn.dialect.name == "sqlite"
 
-    op.create_foreign_key(
-        "fk_video_session",
-        "video",
-        "sessions",
-        ["session_id"],
-        ["code"],
-    )
-    op.create_foreign_key(
-        "fk_queue_items_session",
-        "queue_items",
-        "sessions",
-        ["session_id"],
-        ["code"],
-    )
+    with op.batch_alter_table("video") as batch_op:
+        batch_op.create_foreign_key("fk_video_session", "sessions", ["session_id"], ["code"])
+        if not is_sqlite:
+            batch_op.alter_column("session_id", server_default=None)
 
-    if not is_sqlite:
-        op.alter_column("video", "session_id", server_default=None)
-        op.alter_column("queue_items", "session_id", server_default=None)
-
-    op.alter_column("queue_items", "logs", type_=sa.JSON, existing_type=sa.Text, postgresql_using="logs::jsonb")
-    op.alter_column("queue_items", "result", type_=sa.JSON, existing_type=sa.Text, postgresql_using="result::jsonb")
+    with op.batch_alter_table("queue_items") as batch_op:
+        batch_op.create_foreign_key("fk_queue_items_session", "sessions", ["session_id"], ["code"])
+        batch_op.alter_column("logs", type_=sa.JSON, existing_type=sa.Text, postgresql_using="logs::jsonb")
+        batch_op.alter_column(
+            "result",
+            type_=sa.JSON,
+            existing_type=sa.Text,
+            postgresql_using="result::jsonb",
+        )
+        if not is_sqlite:
+            batch_op.alter_column("session_id", server_default=None)
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_queue_items_session", "queue_items", type_="foreignkey")
-    op.drop_constraint("fk_video_session", "video", type_="foreignkey")
-
-    op.alter_column("queue_items", "result", type_=sa.Text, existing_type=sa.JSON)
-    op.alter_column("queue_items", "logs", type_=sa.Text, existing_type=sa.JSON)
-
     conn = op.get_bind()
     is_sqlite = conn.dialect.name == "sqlite"
-    if not is_sqlite:
-        op.alter_column("video", "session_id", server_default=sa.text("'LEGACY01'"))
-        op.alter_column("queue_items", "session_id", server_default=sa.text("'LEGACY01'"))
+
+    with op.batch_alter_table("queue_items") as batch_op:
+        batch_op.drop_constraint("fk_queue_items_session", type_="foreignkey")
+        batch_op.alter_column("result", type_=sa.Text, existing_type=sa.JSON)
+        batch_op.alter_column("logs", type_=sa.Text, existing_type=sa.JSON)
+        if not is_sqlite:
+            batch_op.alter_column("session_id", server_default=sa.text("'LEGACY01'"))
+
+    with op.batch_alter_table("video") as batch_op:
+        batch_op.drop_constraint("fk_video_session", type_="foreignkey")
+        if not is_sqlite:
+            batch_op.alter_column("session_id", server_default=sa.text("'LEGACY01'"))
