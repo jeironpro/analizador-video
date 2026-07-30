@@ -19,40 +19,47 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "sessions",
-        sa.Column("code", sa.String(8), primary_key=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("last_active", sa.DateTime(), nullable=True),
-    )
-    op.create_table(
-        "queue_items",
-        sa.Column("temp_id", sa.String(36), primary_key=True),
-        sa.Column("original_name", sa.String(255), nullable=False),
-        sa.Column("ext", sa.String(10), nullable=False),
-        sa.Column("temp_path", sa.String(500), nullable=False),
-        sa.Column("temp_filename", sa.String(500), nullable=False),
-        sa.Column("status", sa.String(20), nullable=True, server_default=sa.text("'uploaded'")),
-        sa.Column("logs", sa.Text(), nullable=True, server_default=sa.text("'[]'")),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("result", sa.Text(), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=True),
-        sa.Column("session_id", sa.String(8), nullable=False, server_default=sa.text("'LEGACY01'")),
-        sa.Column("retries", sa.Integer(), nullable=True, server_default=sa.text("0")),
-    )
-    op.create_table(
-        "video",
-        sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("filename", sa.String(255), nullable=False),
-        sa.Column("original_name", sa.String(255), nullable=False),
-        sa.Column("size", sa.Integer(), nullable=False),
-        sa.Column("container", sa.String(20), nullable=True),
-        sa.Column("mime_type", sa.String(100), nullable=True),
-        sa.Column("analysis_result", sa.Text(), nullable=True),
-        sa.Column("clamav_result", sa.String(50), nullable=True),
-        sa.Column("uploaded_at", sa.DateTime(), nullable=True),
-        sa.Column("session_id", sa.String(8), nullable=False, server_default=sa.text("'LEGACY01'")),
-    )
+    _if_not_exists = "CREATE TABLE IF NOT EXISTS"
+    op.execute(f"""
+        {_if_not_exists} sessions (
+            code VARCHAR(8) NOT NULL,
+            created_at TIMESTAMP WITHOUT TIME ZONE,
+            last_active TIMESTAMP WITHOUT TIME ZONE,
+            PRIMARY KEY (code)
+        )
+    """)
+    op.execute(f"""
+        {_if_not_exists} queue_items (
+            temp_id VARCHAR(36) NOT NULL,
+            original_name VARCHAR(255) NOT NULL,
+            ext VARCHAR(10) NOT NULL,
+            temp_path VARCHAR(500) NOT NULL,
+            temp_filename VARCHAR(500) NOT NULL,
+            status VARCHAR(20) DEFAULT 'uploaded',
+            logs TEXT DEFAULT '[]',
+            error TEXT,
+            result TEXT,
+            created_at TIMESTAMP WITHOUT TIME ZONE,
+            session_id VARCHAR(8) NOT NULL DEFAULT 'LEGACY01',
+            retries INTEGER DEFAULT 0,
+            PRIMARY KEY (temp_id)
+        )
+    """)
+    op.execute(f"""
+        {_if_not_exists} video (
+            id VARCHAR(36) NOT NULL,
+            filename VARCHAR(255) NOT NULL,
+            original_name VARCHAR(255) NOT NULL,
+            size INTEGER NOT NULL,
+            container VARCHAR(20),
+            mime_type VARCHAR(100),
+            analysis_result TEXT,
+            clamav_result VARCHAR(50),
+            uploaded_at TIMESTAMP WITHOUT TIME ZONE,
+            session_id VARCHAR(8) NOT NULL DEFAULT 'LEGACY01',
+            PRIMARY KEY (id)
+        )
+    """)
 
 
 def downgrade() -> None:

@@ -22,13 +22,23 @@ def upgrade() -> None:
     conn = op.get_bind()
     is_sqlite = conn.dialect.name == "sqlite"
 
-    with op.batch_alter_table("video") as batch_op:
-        batch_op.create_foreign_key("fk_video_session", "sessions", ["session_id"], ["code"])
-        if not is_sqlite:
-            batch_op.alter_column("session_id", server_default=None)
+    def _create_fk_if_not_exists(table, name, referent, local_cols, remote_cols):
+        if is_sqlite:
+            with op.batch_alter_table(table) as b:
+                b.create_foreign_key(name, referent, local_cols, remote_cols)
+        else:
+            exists = conn.execute(
+                sa.text("SELECT 1 FROM pg_constraint WHERE conname = :name"),
+                {"name": name},
+            ).scalar()
+            if not exists:
+                op.create_foreign_key(name, referent, local_cols, remote_cols, source=table)
+
+    _create_fk_if_not_exists("video", "fk_video_session", "sessions", ["session_id"], ["code"])
+    if not is_sqlite:
+        op.execute("ALTER TABLE video ALTER COLUMN session_id DROP DEFAULT")
 
     with op.batch_alter_table("queue_items") as batch_op:
-        batch_op.create_foreign_key("fk_queue_items_session", "sessions", ["session_id"], ["code"])
         batch_op.alter_column("logs", type_=sa.JSON, existing_type=sa.Text, postgresql_using="logs::jsonb")
         batch_op.alter_column(
             "result",
@@ -36,8 +46,10 @@ def upgrade() -> None:
             existing_type=sa.Text,
             postgresql_using="result::jsonb",
         )
-        if not is_sqlite:
-            batch_op.alter_column("session_id", server_default=None)
+
+    _create_fk_if_not_exists("queue_items", "fk_queue_items_session", "sessions", ["session_id"], ["code"])
+    if not is_sqlite:
+        op.execute("ALTER TABLE queue_items ALTER COLUMN session_id DROP DEFAULT")
 
 
 def downgrade() -> None:
