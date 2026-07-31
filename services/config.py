@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 MIN_FILE_SIZE = 50 * 1024 * 1024
 MAX_FILE_SIZE = 500 * 1024 * 1024
 
@@ -27,6 +29,11 @@ ALLOWED_MIMES: set[str] = {
 }
 
 CLAMAV_MAX_SIZE = 200 * 1024 * 1024
+
+# Si hay menos RAM disponible que este umbral se omite el escaneo para evitar
+# un OOM-kill. Configurable via CLAMAV_MIN_MEM_MB (en MiB).
+CLAMAV_MIN_MEM_MB = int(os.environ.get("CLAMAV_MIN_MEM_MB", "200"))
+CLAMAV_MIN_MEM_BYTES = CLAMAV_MIN_MEM_MB * 1024 * 1024
 
 MAX_RETRIES = 3
 MAX_QUEUE_ITEMS = 20

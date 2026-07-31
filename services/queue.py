@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from models import QueueItem, Video
-from services.config import CLAMAV_MAX_SIZE
+from services.config import CLAMAV_MAX_SIZE, CLAMAV_MIN_MEM_BYTES
 from services.validation import validate_file_size, validate_mime_type
 from video_analyzer import VideoAnalysisError, analyze_video
 
@@ -450,7 +450,7 @@ class QueueManager:
                     self._fail_or_retry(temp_id, f"Error interno: {str(e)}")
                 finally:
                     item = self.get(temp_id)
-                    if item and os.path.exists(item["temp_path"]):
+                    if item and item["status"] in ("done", "error") and os.path.exists(item["temp_path"]):
                         os.remove(item["temp_path"])
         except Exception:
             self.app.logger.exception("Fatal error in _process_item thread for %s", temp_id)
@@ -473,9 +473,9 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
     if psutil is not None:
         try:
             mem = psutil.virtual_memory()
-            if mem.available < 200 * 1024 * 1024:
+            if mem.available < CLAMAV_MIN_MEM_BYTES:
                 _logger.warning("Memoria disponible baja (%s), escaneo omitido", mem.available)
-                return True, "Memoria insuficiente, escaneo omitido"
+                return True, "Escaneo omitido por límite de memoria"
         except Exception:
             pass
     try:
@@ -494,20 +494,20 @@ def scan_with_clamav(filepath: str) -> tuple[bool, str]:
             text=True,
             timeout=300,
         )
-        if result.returncode == 0:
-            return True, "Archivo limpio"
-        if result.returncode == 1:
-            return False, f"Virus detectado: {result.stdout.strip()}"
-        if result.returncode < 0 or result.returncode == 2:
-            return True, "Escaneo omitido por límite de memoria"
-        stderr = result.stderr.strip()
-        if stderr:
-            _logger.error("ClamAV error en %s (código %s): %s", filepath, result.returncode, stderr)
-        return False, f"ClamAV: error interno (código {result.returncode})"
     except FileNotFoundError:
-        return False, "ClamAV no está instalado en el servidor"
+        return True, "ClamAV no disponible, escaneo omitido"
     except subprocess.TimeoutExpired:
-        return False, "Escaneo excedió el tiempo límite"
+        return True, "Escaneo excedió el tiempo límite, omitido"
     except Exception as e:
         _logger.exception("ClamAV exception al escanear %s", filepath)
-        return False, f"ClamAV: error inesperado ({e})"
+        return True, "Escaneo omitido por error interno"
+    if result.returncode == 0:
+        return True, "Archivo limpio"
+    if result.returncode == 1:
+        return False, f"Virus detectado: {result.stdout.strip()}"
+    if result.returncode < 0 or result.returncode == 2:
+        return True, "Escaneo omitido por límite de memoria"
+    stderr = result.stderr.strip()
+    if stderr:
+        _logger.error("ClamAV error en %s (código %s): %s", filepath, result.returncode, stderr)
+    return True, "Escaneo omitido por error interno"

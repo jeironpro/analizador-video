@@ -114,8 +114,8 @@ class TestScanWithClamav:
     def test_clamav_not_found(self, mock_run, temp_file):
         mock_run.side_effect = FileNotFoundError
         ok, msg = scan_with_clamav(temp_file)
-        assert not ok
-        assert "no está instalado" in msg
+        assert ok
+        assert "no disponible" in msg
 
     @patch("services.queue.subprocess.run")
     def test_timeout(self, mock_run, temp_file):
@@ -123,24 +123,36 @@ class TestScanWithClamav:
 
         mock_run.side_effect = TimeoutExpired("clamscan", 300)
         ok, msg = scan_with_clamav(temp_file)
-        assert not ok
+        assert ok
         assert "excedió" in msg
 
     @patch("services.queue.subprocess.run")
-    def test_killed_by_rlimit_memory(self, mock_run, temp_file):
+    def test_killed_by_signal(self, mock_run, temp_file):
         mock_result = MagicMock()
         mock_result.returncode = -9
+        mock_result.stderr.strip.return_value = ""
+        mock_run.return_value = mock_result
+        ok, msg = scan_with_clamav(temp_file)
+        assert ok
+        assert "omitido" in msg
+
+    @patch("services.queue.subprocess.run")
+    def test_returncode_2_size_limit(self, mock_run, temp_file):
+        mock_result = MagicMock()
+        mock_result.returncode = 2
+        mock_result.stderr.strip.return_value = ""
         mock_run.return_value = mock_result
         ok, msg = scan_with_clamav(temp_file)
         assert ok
         assert "límite de memoria" in msg
 
-    @patch("services.queue.subprocess.run")
-    def test_returncode_2_memory(self, mock_run, temp_file):
-        mock_result = MagicMock()
-        mock_result.returncode = 2
-        mock_result.stderr.strip.return_value = ""
-        mock_run.return_value = mock_result
+    @patch("services.queue.psutil")
+    def test_skipped_when_low_memory(self, mock_psutil, temp_file):
+        from services.config import CLAMAV_MIN_MEM_BYTES
+
+        mock_mem = MagicMock()
+        mock_mem.available = CLAMAV_MIN_MEM_BYTES - 1
+        mock_psutil.virtual_memory.return_value = mock_mem
         ok, msg = scan_with_clamav(temp_file)
         assert ok
         assert "límite de memoria" in msg

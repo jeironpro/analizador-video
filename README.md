@@ -22,7 +22,7 @@ Aplicación web para escanear, validar y almacenar archivos de video. Utiliza Cl
 - Cola de procesamiento persistente en PostgreSQL (sobrevive reinicios)
 - Procesamiento secuencial (1 item a la vez)
 - Validación de tamaño, tipo MIME (python-magic), codecs de video/audio, resolución, FPS, contenedor
-- Escaneo antivirus con ClamAV (salta automáticamente si hay < 200 MB de RAM libre)
+- Escaneo antivirus con ClamAV (se omite si hay < 200 MB de RAM libre, configurable con `CLAMAV_MIN_MEM_MB`, o si el video supera los 200 MB; los errores de infraestructura no bloquean el procesamiento, solo un virus detectado lo rechaza)
 - Reintento automático de items fallidos (configurable, default 3)
 - Recuperación automática de items "stuck" en processing (timeout configurable)
 - Detección de metadatos sospechosos
