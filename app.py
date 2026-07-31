@@ -79,7 +79,10 @@ if database_url.startswith("sqlite:///") and not database_url.startswith("sqlite
 if database_url.startswith("postgres") and "sslmode" not in database_url:
     database_url += "?sslmode=require" if "?" not in database_url else "&sslmode=require"
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
-app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {"pool_pre_ping": True, "pool_recycle": 300}
+_engine_options: dict[str, Any] = {"pool_pre_ping": True, "pool_recycle": 300}
+if database_url.startswith("postgres"):
+    _engine_options.update({"pool_size": 8, "max_overflow": 12})
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = _engine_options
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 base_dir = os.environ.get("UPLOAD_DIR", "/data" if os.environ.get("RENDER") else app.instance_path)
@@ -179,6 +182,17 @@ def _validate_config() -> None:
 SESSION_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
+def _utcnow() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+def _touch_session(sess: Session) -> None:
+    now = _utcnow()
+    if sess.last_active is None or (now - sess.last_active).total_seconds() > 60:
+        sess.last_active = now
+        db.session.commit()
+
+
 def _generate_session_code(length: int = 8) -> str:
     return "".join(secrets.choice(SESSION_CODE_ALPHABET) for _ in range(length))
 
@@ -204,8 +218,7 @@ def _session_required() -> str | None:
         return None
     sess = db.session.get(Session, code)
     if sess:
-        sess.last_active = datetime.now(UTC)
-        db.session.commit()
+        _touch_session(sess)
         return code
     return None
 
@@ -245,8 +258,7 @@ def index() -> Response:
     if code:
         sess = db.session.get(Session, code)
         if sess:
-            sess.last_active = datetime.now(UTC)
-            db.session.commit()
+            _touch_session(sess)
             resp = redirect(f"/s/{code}/")
             resp.set_cookie("session_code", code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
             return resp
@@ -267,8 +279,7 @@ def session_view(code: str) -> Response:
         resp = redirect(f"/s/{new_code}/")
         resp.set_cookie("session_code", new_code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
         return resp
-    sess.last_active = datetime.now(UTC)
-    db.session.commit()
+    _touch_session(sess)
     resp = make_response(render_template("index.html"))
     resp.set_cookie("session_code", code, max_age=60 * 60 * 24 * 365, httponly=True, samesite="Lax")
     return resp
@@ -415,18 +426,18 @@ def list_queue() -> tuple[Response, int]:
 def queue_events() -> Response:
     def generate():
         last_state = None
+        last_ping = time.monotonic()
         while True:
             code = request.cookies.get("session_code")
-            if not code:
-                yield f"data: []\n\n"
-                last_state = "[]"
-                time.sleep(1)
-                continue
-            items = queue.list_items(session_code=code)
+            items = queue.list_items(session_code=code) if code else []
             serialized = json.dumps(items)
             if serialized != last_state:
                 yield f"data: {serialized}\n\n"
                 last_state = serialized
+                last_ping = time.monotonic()
+            elif time.monotonic() - last_ping >= 30:
+                yield ": keep-alive\n\n"
+                last_ping = time.monotonic()
             time.sleep(1)
 
     return Response(
@@ -457,6 +468,7 @@ def queue_process(temp_id: str) -> tuple[Response, int]:
 def queue_stream(temp_id: str) -> Response:
     def generate():
         last_count = 0
+        last_ping = time.monotonic()
         while True:
             item = queue.get(temp_id)
             if not item:
@@ -466,12 +478,16 @@ def queue_stream(temp_id: str) -> Response:
                 log = item["logs"][last_count]
                 yield sse_step(log["step"], log["status"], log["message"])
                 last_count += 1
+                last_ping = time.monotonic()
             if item["status"] == "done":
                 yield sse_complete({"video": item["result"]})
                 return
             if item["status"] in ("error", "cancelled"):
                 yield sse_error(item["error"] or "Error desconocido")
                 return
+            if time.monotonic() - last_ping >= 30:
+                yield ": keep-alive\n\n"
+                last_ping = time.monotonic()
             time.sleep(0.5)
 
     return Response(
