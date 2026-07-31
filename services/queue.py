@@ -1,163 +1,88 @@
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
-import shutil
-import subprocess
-import threading
-import time
-import uuid
-from collections import OrderedDict
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from models import QueueItem, Video
-from services.config import CLAMAV_MAX_SIZE, CLAMAV_MIN_MEM_BYTES
-from services.validation import validate_file_size, validate_mime_type
-from video_analyzer import VideoAnalysisError, analyze_video
+from models import QueueItem
+from services.redis_queue import get_rq_queue, redis_available
 
 _logger = logging.getLogger(__name__)
-
-try:
-    import psutil
-except ImportError:
-    psutil = None
 
 QueueDict = dict[str, Any]
 
 
+def _item_to_dict(qi: QueueItem) -> QueueDict:
+    return {
+        "temp_id": qi.temp_id,
+        "temp_path": qi.temp_path,
+        "temp_filename": qi.temp_filename,
+        "original_name": qi.original_name,
+        "ext": qi.ext,
+        "session_code": qi.session_id,
+        "status": qi.status,
+        "logs": list(qi.logs) if qi.logs else [],
+        "result": dict(qi.result) if qi.result else None,
+        "error": qi.error,
+        "retries": qi.retries or 0,
+    }
+
+
 class QueueManager:
+    """Cola respaldada por PostgreSQL + jobs RQ en Redis.
+
+    El estado y los logs viven en la tabla queue_items (fuente de verdad),
+    compartida entre los web workers y los workers RQ.
+    """
+
     def __init__(self, app: Any, db: Any) -> None:
         self.app = app
         self.db = db
-        self._queue: OrderedDict[str, QueueDict] = OrderedDict()
-        self._lock = threading.Lock()
-        self._executor = ThreadPoolExecutor(max_workers=1)
-
-        self._scheduler_running = False
         self._upload_folder: str = app.config["UPLOAD_FOLDER"]
-        self._item_timeout: int = app.config.get("ITEM_TIMEOUT", 600)
+        self._item_timeout: int = app.config.get("ITEM_TIMEOUT", 1200)
         self._max_retries: int = app.config.get("MAX_RETRIES", 3)
-        self._shutdown = False
 
     # ------------------------------------------------------------------
-    # Thread-safe queue operations
+    # Reads (Postgres)
     # ------------------------------------------------------------------
     def get(self, temp_id: str) -> QueueDict | None:
-        with self._lock:
-            return self._queue.get(temp_id)
+        qi = self.db.session.get(QueueItem, temp_id)
+        return _item_to_dict(qi) if qi else None
 
     def list_items(self, session_code: str | None = None) -> list[dict[str, str]]:
-        with self._lock:
-            return [
-                {
-                    "temp_id": qi["temp_id"],
-                    "original_name": qi["original_name"],
-                    "status": qi["status"],
-                }
-                for qi in self._queue.values()
-                if session_code is None or qi.get("session_code") == session_code
-            ]
+        q = QueueItem.query
+        if session_code is not None:
+            q = q.filter(QueueItem.session_id == session_code)
+        return [
+            {"temp_id": qi.temp_id, "original_name": qi.original_name, "status": qi.status}
+            for qi in q.order_by(QueueItem.created_at.desc()).all()
+        ]
 
     def count_items(self, session_code: str) -> int:
-        with self._lock:
-            return sum(1 for qi in self._queue.values() if qi.get("session_code") == session_code)
+        return QueueItem.query.filter(QueueItem.session_id == session_code).count()
 
+    # ------------------------------------------------------------------
+    # Writes (Postgres)
+    # ------------------------------------------------------------------
     def add(
         self, temp_id: str, temp_path: str, temp_filename: str, original_name: str, ext: str, session_code: str
     ) -> None:
-        with self._lock:
-            self._queue[temp_id] = {
-                "temp_id": temp_id,
-                "temp_path": temp_path,
-                "temp_filename": temp_filename,
-                "original_name": original_name,
-                "ext": ext,
-                "session_code": session_code,
-                "status": "uploaded",
-                "logs": [],
-                "result": None,
-                "error": None,
-                "retries": 0,
-            }
-        self._save_to_db(temp_id)
+        qi = QueueItem(
+            temp_id=temp_id,
+            original_name=original_name,
+            ext=ext,
+            temp_path=temp_path,
+            temp_filename=temp_filename,
+            session_id=session_code,
+            status="uploaded",
+            logs=[],
+            retries=0,
+        )
+        self.db.session.add(qi)
+        self.db.session.commit()
 
     def log(self, temp_id: str, step: str, status: str, message: str) -> None:
         entry = {"step": step, "status": status, "message": message}
-        with self._lock:
-            item = self._queue.get(temp_id)
-            if item:
-                item["logs"].append(entry)
-        self._persist_log(temp_id, entry)
-
-    def update_status(self, temp_id: str, status: str, error: str | None = None, result: dict | None = None) -> None:
-        with self._lock:
-            item = self._queue.get(temp_id)
-            if item:
-                item["status"] = status
-                if error is not None:
-                    item["error"] = error
-                if result is not None:
-                    item["result"] = result
-        self._persist_status(temp_id, status, error, result)
-
-    def remove(self, temp_id: str) -> None:
-        item = None
-        with self._lock:
-            item = self._queue.pop(temp_id, None)
-        if item and os.path.exists(item["temp_path"]):
-            os.remove(item["temp_path"])
-        self._delete_from_db(temp_id)
-
-    def cancel(self, temp_id: str) -> None:
-        entry = {"step": "cancel", "status": "error", "message": "Procesamiento cancelado por el usuario"}
-        with self._lock:
-            item = self._queue.get(temp_id)
-            if item and item["status"] == "processing":
-                item["status"] = "cancelled"
-                item["error"] = "Cancelado por el usuario"
-                item["logs"].append(entry)
-        self._persist_status(temp_id, "cancelled", "Cancelado por el usuario", None)
-        self._persist_log(temp_id, entry)
-
-    def _is_cancelled(self, temp_id: str) -> bool:
-        with self._lock:
-            item = self._queue.get(temp_id)
-            return item is None or item["status"] != "processing"
-
-    # ------------------------------------------------------------------
-    # DB persistence helpers
-    # ------------------------------------------------------------------
-    def _save_to_db(self, temp_id: str) -> None:
-        with self._lock:
-            item = self._queue.get(temp_id)
-            if not item:
-                return
-            original_name = item["original_name"]
-            ext = item["ext"]
-            temp_path = item["temp_path"]
-            temp_filename = item["temp_filename"]
-            session_code = item.get("session_code", "LEGACY01")
-        try:
-            qi = QueueItem(
-                temp_id=temp_id,
-                original_name=original_name,
-                ext=ext,
-                temp_path=temp_path,
-                temp_filename=temp_filename,
-                session_id=session_code,
-                status="uploaded",
-                logs="[]",
-                retries=0,
-            )
-            self.db.session.add(qi)
-            self.db.session.commit()
-        except Exception:
-            self.db.session.rollback()
-
-    def _persist_log(self, temp_id: str, entry: dict) -> None:
         try:
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
@@ -168,7 +93,7 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _persist_status(self, temp_id: str, status: str, error: str | None, result: dict | None) -> None:
+    def update_status(self, temp_id: str, status: str, error: str | None = None, result: dict | None = None) -> None:
         try:
             qi = self.db.session.get(QueueItem, temp_id)
             if qi:
@@ -181,333 +106,86 @@ class QueueManager:
         except Exception:
             self.db.session.rollback()
 
-    def _delete_from_db(self, temp_id: str) -> None:
-        try:
-            qi = self.db.session.get(QueueItem, temp_id)
-            if qi:
-                self.db.session.delete(qi)
-                self.db.session.commit()
-        except Exception:
-            self.db.session.rollback()
+    def remove(self, temp_id: str) -> None:
+        self._cancel_rq_job(temp_id)
+        qi = self.db.session.get(QueueItem, temp_id)
+        if qi and os.path.exists(qi.temp_path):
+            os.remove(qi.temp_path)
+        if qi:
+            self.db.session.delete(qi)
+            self.db.session.commit()
 
-    def _persist_retries(self, temp_id: str, retries: int) -> None:
-        try:
-            qi = self.db.session.get(QueueItem, temp_id)
-            if qi:
-                qi.retries = retries
-                self.db.session.commit()
-        except Exception:
-            self.db.session.rollback()
+    def cancel(self, temp_id: str) -> None:
+        entry = {"step": "cancel", "status": "error", "message": "Procesamiento cancelado por el usuario"}
+        qi = self.db.session.get(QueueItem, temp_id)
+        if qi and qi.status == "processing":
+            qi.status = "cancelled"
+            qi.error = "Cancelado por el usuario"
+            logs = list(qi.logs) if qi.logs else []
+            logs.append(entry)
+            qi.logs = logs
+            self.db.session.commit()
+        self._cancel_rq_job(temp_id)
 
-    def _fail_or_retry(self, temp_id: str, error_msg: str) -> None:
-        retries = 0
-        with self._lock:
-            item = self._queue.get(temp_id)
-            if not item:
-                return
-            item["retries"] = item.get("retries", 0) + 1
-            retries = item["retries"]
-            if retries < self._max_retries:
-                item["error"] = error_msg
-                item["status"] = "queued"
-                self.app.logger.warning(
-                    "Item %s failed (attempt %d/%d), retrying: %s",
-                    temp_id,
-                    retries,
-                    self._max_retries,
-                    error_msg,
-                )
-            else:
-                item["status"] = "error"
-                item["error"] = error_msg
-        if retries < self._max_retries:
-            self._persist_status(temp_id, "queued", error=error_msg, result=None)
-        else:
-            self._persist_status(temp_id, "error", error=error_msg, result=None)
-        self._persist_retries(temp_id, retries)
+    def is_cancelled(self, temp_id: str) -> bool:
+        qi = self.db.session.get(QueueItem, temp_id)
+        return qi is None or qi.status != "processing"
 
     # ------------------------------------------------------------------
-    # Load from DB on startup
+    # RQ orchestration
+    # ------------------------------------------------------------------
+    def enqueue(self, temp_id: str) -> None:
+        from rq import Retry
+
+        from services.pipeline import process_video
+
+        try:
+            qi = self.db.session.get(QueueItem, temp_id)
+            if qi:
+                qi.status = "queued"
+                self.db.session.commit()
+        except Exception:
+            self.db.session.rollback()
+        if not redis_available():
+            _logger.warning("Redis no disponible; procesando %s en línea", temp_id)
+            self._process_inline(temp_id)
+            return
+        retry = Retry(max=max(0, self._max_retries - 1), interval=[60, 120, 240])
+        try:
+            get_rq_queue().enqueue(
+                process_video,
+                temp_id,
+                job_id=temp_id,
+                timeout=self._item_timeout,
+                retry=retry,
+            )
+        except Exception:
+            _logger.exception("No se pudo encolar %s en RQ; procesando en línea", temp_id)
+            self._process_inline(temp_id)
+
+    def _process_inline(self, temp_id: str) -> None:
+        from app import app
+        from services.pipeline import process_video
+
+        with app.app_context():
+            process_video(temp_id)
+
+    def _cancel_rq_job(self, temp_id: str) -> None:
+        if not redis_available():
+            return
+        try:
+            get_rq_queue().cancel_job(temp_id)
+        except Exception:
+            _logger.warning("No se pudo cancelar el job RQ %s", temp_id)
+
+    # ------------------------------------------------------------------
+    # Compatibility no-ops (la cola vive en Postgres/Redis)
     # ------------------------------------------------------------------
     def load_from_db(self) -> None:
-        try:
-            items = QueueItem.query.filter(QueueItem.status.in_(["uploaded", "queued", "processing"])).all()
-            with self._lock:
-                for qi in items:
-                    self._queue[qi.temp_id] = {
-                        "temp_id": qi.temp_id,
-                        "temp_path": qi.temp_path,
-                        "temp_filename": qi.temp_filename,
-                        "original_name": qi.original_name,
-                        "ext": qi.ext,
-                        "session_code": qi.session_id,
-                        "status": qi.status,
-                        "logs": list(qi.logs) if qi.logs else [],
-                        "result": dict(qi.result) if qi.result else None,
-                        "error": qi.error,
-                        "retries": qi.retries or 0,
-                    }
-        except Exception:
-            self.app.logger.exception("Error loading queue from DB")
+        pass
 
-    # ------------------------------------------------------------------
-    # Scheduler and worker
-    # ------------------------------------------------------------------
     def start_scheduler(self) -> None:
-        if self._scheduler_running:
-            return
-        self._scheduler_running = True
-        with self._lock:
-            for qi in self._queue.values():
-                if qi["status"] == "processing":
-                    qi["status"] = "queued"
-        t = threading.Thread(target=self._scheduler_loop, daemon=True)
-        t.start()
-
-    def _scheduler_loop(self) -> None:
-        with self.app.app_context():
-            while not self._shutdown:
-                self._recover_stale_processing()
-                temp_id = None
-                with self._lock:
-                    processing = sum(1 for qi in self._queue.values() if qi["status"] == "processing")
-                    if processing < 1:
-                        for qi in self._queue.values():
-                            if qi["status"] == "queued":
-                                qi["status"] = "processing"
-                                temp_id = qi["temp_id"]
-                                break
-                if temp_id:
-                    self.update_status(temp_id, "processing")
-                    self._executor.submit(self._process_item, temp_id)
-                self._cleanup_done_items()
-                time.sleep(1)
-        self._shutdown_cleanup()
-
-    def _shutdown_cleanup(self) -> None:
-        self._executor.shutdown(wait=True)
-        self.app.logger.info("Graceful shutdown: resetting processing items to queued")
-        with self._lock:
-            for qi in self._queue.values():
-                if qi["status"] == "processing":
-                    qi["status"] = "queued"
-                    qi.pop("started_at", None)
-        for qi in list(self._queue.values()):
-            if qi["status"] in ("processing",):
-                self._persist_status(qi["temp_id"], "queued")
+        pass
 
     def shutdown(self) -> None:
-        self._shutdown = True
-
-    def _cleanup_done_items(self) -> None:
-        with self._lock:
-            done_ids = [tid for tid, qi in self._queue.items() if qi["status"] in ("done", "error")]
-        for tid in done_ids:
-            self.remove(tid)
-
-    def _recover_stale_processing(self) -> None:
-        try:
-            with self._lock:
-                now = time.time()
-                for qi in list(self._queue.values()):
-                    if qi["status"] == "processing":
-                        if "started_at" not in qi:
-                            qi["started_at"] = now
-                        elif now - qi["started_at"] > self._item_timeout:
-                            self.app.logger.warning("Recovering stale processing item %s", qi["temp_id"])
-                            qi["status"] = "queued"
-                            qi.pop("started_at", None)
-        except Exception:
-            pass
-
-    def _run_validation_step(
-        self, temp_id: str, tp: str, step_name: str, label: str, validate_fn: Callable[[str], tuple[bool, str]]
-    ) -> tuple[bool, str] | tuple[bool, None]:
-        self.log(temp_id, step_name, "checking", label)
-        if self._is_cancelled(temp_id):
-            return False, None
-        ok, result = validate_fn(tp)
-        if not ok:
-            self.log(temp_id, step_name, "error", result)
-            self._fail_or_retry(temp_id, result)
-            return False, None
-        self.log(temp_id, step_name, "ok", result)
-        return True, result
-
-    def _run_analysis_step(self, temp_id: str, tp: str) -> tuple[bool, dict | None]:
-        self.log(temp_id, "analysis", "checking", "Analizando codecs y metadatos...")
-        if self._is_cancelled(temp_id):
-            return False, None
-        analysis = analyze_video(tp)
-        if not analysis.get("valid", False):
-            for err in analysis.get("errors", []):
-                self.log(temp_id, "analysis", "error", err)
-            self.update_status(temp_id, "error", error="Análisis de video fallido")
-            self._fail_or_retry(temp_id, "Análisis de video fallido")
-            return False, None
-
-        self.log(temp_id, "analysis", "ok", f"Contenedor: {analysis.get('container')}")
-        for s in analysis.get("streams", []):
-            t = "Video" if s["type"] == "video" else "Audio"
-            d = (
-                f"{s['codec']} {s['resolution']} @ {s['fps']} fps"
-                if s["type"] == "video"
-                else f"{s['codec']} {s.get('channels', '?')}ch"
-            )
-            self.log(temp_id, "stream", "info", f"{t}: {d}")
-        return True, analysis
-
-    def _store_video(self, temp_id: str, tp: str, item: QueueDict, analysis: dict, clam_msg: str) -> None:
-        self.log(temp_id, "save", "checking", "Guardando archivo...")
-        video_id = str(uuid.uuid4())
-        filename = f"{video_id}{item['ext']}"
-        session_dir = os.path.join(self._upload_folder, item["session_code"])
-        os.makedirs(session_dir, exist_ok=True)
-        final_path = os.path.join(session_dir, filename)
-        shutil.move(tp, final_path)
-
-        mime_type = validate_mime_type(final_path)
-        mime_val = mime_type[1] if mime_type[0] else "application/octet-stream"
-
-        sha256 = _compute_sha256(final_path)
-
-        video = Video(
-            id=video_id,
-            filename=filename,
-            original_name=item["original_name"],
-            size=os.path.getsize(final_path),
-            container=analysis.get("container", item["ext"].lstrip(".")),
-            mime_type=mime_val,
-            analysis_result=str(analysis.get("errors", [])),
-            clamav_result=clam_msg,
-            sha256=sha256,
-            session_id=item["session_code"],
-        )
-        self.db.session.add(video)
-        self.db.session.commit()
-
-        self.log(temp_id, "save", "ok", "Video almacenado correctamente")
-        self.log(temp_id, "complete", "ok", "Proceso finalizado")
-        self.update_status(temp_id, "done", result=video.to_dict())
-
-        lines = [
-            "Resultado del procesamiento",
-            f"  Nombre      : {item['original_name']}",
-            f"  Tamaño      : {os.path.getsize(final_path) / 1024 / 1024:.1f} MB",
-            f"  Contenedor  : {analysis.get('container', '?')}",
-            f"  MIME        : {mime_val}",
-            f"  SHA-256     : {sha256}",
-            f"  ClamAV      : {clam_msg}",
-        ]
-        for s in analysis.get("streams", []):
-            if s["type"] == "video":
-                lines.append(f"  Video       : {s['codec']} {s['resolution']} @ {s['fps']} fps")
-            else:
-                lines.append(f"  Audio       : {s['codec']} {s.get('channels', '?')}ch")
-        for line in lines:
-            self.log(temp_id, "result", "info", line)
-
-    def _process_item(self, temp_id: str) -> None:
-        try:
-            with self.app.app_context():
-                try:
-                    item = self.get(temp_id)
-                    if not item:
-                        return
-                    tp = item["temp_path"]
-
-                    if not os.path.exists(tp):
-                        self.log(temp_id, "size", "error", "Archivo temporal no encontrado")
-                        self.update_status(temp_id, "error", error="Archivo temporal no encontrado")
-                        return
-
-                    ok, _ = self._run_validation_step(temp_id, tp, "size", "Validando tamaño...", validate_file_size)
-                    if not ok:
-                        return
-
-                    ok, _ = self._run_validation_step(
-                        temp_id, tp, "mime", "Detectando tipo MIME...", validate_mime_type
-                    )
-                    if not ok:
-                        return
-
-                    ok, clam_msg = self._run_validation_step(
-                        temp_id, tp, "clamav", "Escaneando con ClamAV...", scan_with_clamav
-                    )
-                    if not ok:
-                        return
-
-                    ok, analysis = self._run_analysis_step(temp_id, tp)
-                    if not ok:
-                        return
-
-                    self._store_video(temp_id, tp, item, analysis, clam_msg)
-
-                except VideoAnalysisError as e:
-                    self._fail_or_retry(temp_id, f"Error de análisis: {str(e)}")
-                except Exception as e:
-                    self.app.logger.exception("Error en process_item %s", temp_id)
-                    self._fail_or_retry(temp_id, f"Error interno: {str(e)}")
-                finally:
-                    item = self.get(temp_id)
-                    if item and item["status"] in ("done", "error") and os.path.exists(item["temp_path"]):
-                        os.remove(item["temp_path"])
-        except Exception:
-            self.app.logger.exception("Fatal error in _process_item thread for %s", temp_id)
-            with self._lock:
-                qi = self._queue.get(temp_id)
-                if qi:
-                    qi["status"] = "error"
-                    qi["error"] = "Fatal error interno"
-
-
-def _compute_sha256(filepath: str) -> str:
-    sha = hashlib.sha256()
-    with open(filepath, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            sha.update(chunk)
-    return sha.hexdigest()
-
-
-def scan_with_clamav(filepath: str) -> tuple[bool, str]:
-    if psutil is not None:
-        try:
-            mem = psutil.virtual_memory()
-            if mem.available < CLAMAV_MIN_MEM_BYTES:
-                _logger.warning("Memoria disponible baja (%s), escaneo omitido", mem.available)
-                return True, "Escaneo omitido por límite de memoria"
-        except Exception:
-            pass
-    try:
-        result = subprocess.run(
-            [
-                "clamscan",
-                "--stdout",
-                "--no-summary",
-                "--quiet",
-                "--database=/var/lib/clamav",
-                f"--max-filesize={CLAMAV_MAX_SIZE // (1024 * 1024)}M",
-                f"--max-scansize={CLAMAV_MAX_SIZE // (1024 * 1024)}M",
-                filepath,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except FileNotFoundError:
-        return True, "ClamAV no disponible, escaneo omitido"
-    except subprocess.TimeoutExpired:
-        return True, "Escaneo excedió el tiempo límite, omitido"
-    except Exception as e:
-        _logger.exception("ClamAV exception al escanear %s", filepath)
-        return True, "Escaneo omitido por error interno"
-    if result.returncode == 0:
-        return True, "Archivo limpio"
-    if result.returncode == 1:
-        return False, f"Virus detectado: {result.stdout.strip()}"
-    if result.returncode < 0 or result.returncode == 2:
-        return True, "Escaneo omitido por límite de memoria"
-    stderr = result.stderr.strip()
-    if stderr:
-        _logger.error("ClamAV error en %s (código %s): %s", filepath, result.returncode, stderr)
-    return True, "Escaneo omitido por error interno"
+        pass

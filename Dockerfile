@@ -1,11 +1,8 @@
 FROM python:3.14-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    clamav \
-    clamav-freshclam \
     ffmpeg \
     ca-certificates \
-    && freshclam \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 appuser
@@ -16,9 +13,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN chown -R appuser:appuser /opt/render/project/src
 
-ENV RENDER=true
+# Directorios de datos (los volúmenes nombrados heredarán este ownership)
+RUN mkdir -p /data/uploads /data/temp \
+    && chown -R appuser:appuser /opt/render/project/src /data
 
 USER appuser
 

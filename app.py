@@ -15,6 +15,7 @@ from typing import Any
 from flask import (
     Flask,
     Response,
+    g,
     jsonify,
     make_response,
     redirect,
@@ -41,23 +42,42 @@ app = Flask(__name__)
 # ---------------------------------------------------------------------------
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
-        return json.dumps(
-            {
-                "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
-                "level": record.levelname,
-                "logger": record.name,
-                "msg": record.getMessage(),
-                "module": record.module,
-                "func": record.funcName,
-                "line": record.lineno,
-            },
-            ensure_ascii=False,
-        )
+        data = {
+            "ts": datetime.fromtimestamp(record.created, tz=UTC).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+            "module": record.module,
+            "func": record.funcName,
+            "line": record.lineno,
+        }
+        request_id = getattr(record, "request_id", None)
+        if request_id:
+            data["request_id"] = request_id
+        return json.dumps(data, ensure_ascii=False)
+
+
+def _request_id() -> str:
+    try:
+        return request.headers.get("X-Request-ID") or ""
+    except Exception:
+        return ""
+
+
+class _RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            rid = getattr(request, "request_id", None) or _request_id()
+        except RuntimeError:
+            rid = ""
+        record.request_id = rid
+        return True
 
 
 if os.environ.get("LOG_FORMAT", "json" if os.environ.get("RENDER") else "text").lower() in ("json", "true", "1"):
     _handler = logging.StreamHandler(sys.stdout)
     _handler.setFormatter(JsonFormatter())
+    _handler.addFilter(_RequestIdFilter())
     _handler.setLevel(logging.INFO)
     root = logging.getLogger()
     root.handlers.clear()
@@ -76,7 +96,7 @@ if database_url.startswith("sqlite:///") and not database_url.startswith("sqlite
     if not os.path.isabs(_db_path):
         _db_path = os.path.abspath(os.path.join(app.instance_path, _db_path))
         database_url = f"sqlite:///{_db_path}"
-if database_url.startswith("postgres") and "sslmode" not in database_url:
+if database_url.startswith("postgres") and "sslmode" not in database_url and os.environ.get("RENDER"):
     database_url += "?sslmode=require" if "?" not in database_url else "&sslmode=require"
 app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 _engine_options: dict[str, Any] = {"pool_pre_ping": True, "pool_recycle": 300}
@@ -93,11 +113,22 @@ if not secret_key:
     app.logger.warning("SECRET_KEY no configurada — usando clave aleatoria. Las sesiones se invalidarán al reiniciar.")
     secret_key = os.urandom(24).hex()
 app.secret_key = secret_key
-app.config["DEBUG"] = os.environ.get("RENDER") != "true"
+app.config["DEBUG"] = os.environ.get("DEBUG", "").lower() in ("1", "true", "yes")
 app.config["SESSION_DAYS"] = int(os.environ.get("SESSION_DAYS", "7"))
 app.config["ITEM_TIMEOUT"] = int(os.environ.get("ITEM_TIMEOUT", "600"))
 app.config["MAX_RETRIES"] = int(os.environ.get("MAX_RETRIES", "3"))
 app.config["MAX_QUEUE_ITEMS"] = int(os.environ.get("MAX_QUEUE_ITEMS", "20"))
+
+
+@app.before_request
+def _set_request_id() -> None:
+    rid = request.headers.get("X-Request-ID") or _generate_request_id()
+    request.request_id = rid  # type: ignore[attr-defined]
+    g.request_id = rid  # type: ignore[attr-defined]
+
+
+def _generate_request_id() -> str:
+    return uuid.uuid4().hex[:12]
 
 
 @app.after_request
@@ -459,8 +490,7 @@ def queue_process(temp_id: str) -> tuple[Response, int]:
         return jsonify({"error": "Item no pertenece a esta sesión"}), 403
     if item["status"] != "uploaded":
         return jsonify({"error": f"El item está en estado: {item['status']}"}), 400
-    queue.update_status(temp_id, "queued")
-    queue.start_scheduler()
+    queue.enqueue(temp_id)
     return jsonify({"message": "Item agregado a la cola de procesamiento"}), 200
 
 
@@ -550,6 +580,24 @@ def download(video_id: str) -> tuple[Response, int]:
     ), 200
 
 
+@app.route("/api/thumbnail/<video_id>", methods=["GET"])
+def thumbnail(video_id: str) -> Response:
+    code = _session_required()
+    if not code:
+        return jsonify({"error": "Sesión no válida"}), 401
+    video = db.session.get(Video, video_id)
+    if not video:
+        return jsonify({"error": "Video no encontrado"}), 404
+    if video.session_id != code:
+        return jsonify({"error": "Video no pertenece a esta sesión"}), 403
+    if not video.has_thumbnail:
+        return jsonify({"error": "Video no tiene miniatura"}), 404
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.session_id, f"{video_id}.jpg")
+    if not os.path.exists(filepath):
+        return jsonify({"error": "Miniatura no encontrada"}), 404
+    return send_file(filepath, mimetype="image/jpeg", max_age=86400), 200
+
+
 @app.route("/api/delete/<video_id>", methods=["DELETE"])
 def delete(video_id: str) -> tuple[Response, int]:
     code = _session_required()
@@ -584,7 +632,6 @@ def server_error(e: Any) -> tuple[str, int]:
 # Load queue from DB on startup
 with app.app_context():
     queue.load_from_db()
-    cleanup.start()
 
 if __name__ == "__main__":
     app.run(debug=True, port=5001)

@@ -1,0 +1,11 @@
+# Sirve en el puerto 80 del contenedor (publicado como 8080 en el host).
+# Responde a cualquier IP/host de la red local, sin HTTPS.
+:80 {
+    encode gzip zstd
+
+    request_body {
+        max_size 512MB
+    }
+
+    reverse_proxy app:8080
+}

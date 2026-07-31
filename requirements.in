@@ -4,5 +4,7 @@ psycopg2-binary
 python-magic
 gunicorn
 
-psutil
 alembic
+redis
+rq
+pyclamd

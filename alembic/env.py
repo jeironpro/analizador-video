@@ -18,7 +18,7 @@ def get_url() -> str:
             _parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             _db_path = os.path.abspath(os.path.join(_parent, "instance", _db_path))
             url = f"sqlite:///{_db_path}"
-    if url.startswith("postgres") and "sslmode" not in url:
+    if url.startswith("postgres") and "sslmode" not in url and os.environ.get("RENDER"):
         url += "?sslmode=require" if "?" not in url else "&sslmode=require"
     return url
 

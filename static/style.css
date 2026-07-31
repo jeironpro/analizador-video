@@ -154,6 +154,14 @@ body {
   font-size: .9rem;
   color: #0f172a;
 }
+.video-thumb {
+  width: 100%;
+  height: 140px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: .65rem;
+  background: #f1f5f9;
+}
 
 /* Empty state */
 .empty-state {

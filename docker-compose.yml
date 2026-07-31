@@ -3,10 +3,8 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: analizador
-      POSTGRES_PASSWORD: analizador_pass
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-analizador_pass}
       POSTGRES_DB: analizador
-    ports:
-      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -16,37 +14,109 @@ services:
       retries: 5
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: redis-cli ping
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   clamav:
-    image: mkodockx/docker-clamav:latest
-    ports:
-      - "3310:3310"
+    image: clamav/clamav:latest
+    environment:
+      CLAMD_CONF_StreamMaxLength: "500M"
     volumes:
       - clamav_db:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "echo PING | nc -w 3 localhost 3310 | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
     restart: unless-stopped
 
   app:
     build: .
-    ports:
-      - "8080:8080"
     environment:
       PORT: "8080"
-      DATABASE_URL: postgresql://analizador:analizador_pass@db:5432/analizador
+      DATABASE_URL: postgresql://analizador:${POSTGRES_PASSWORD:-analizador_pass}@db:5432/analizador
+      REDIS_URL: redis://redis:6379/0
+      CLAMAV_HOST: clamav
       UPLOAD_DIR: /data
-      SECRET_KEY: dev-secret-key-change-in-prod
+      SECRET_KEY: ${SECRET_KEY:?Define SECRET_KEY en el archivo .env}
       SESSION_DAYS: "7"
-      ITEM_TIMEOUT: "600"
+      ITEM_TIMEOUT: "1200"
       MAX_RETRIES: "3"
       LOG_FORMAT: json
+      DEBUG: "false"
+      WEB_WORKERS: "2"
+      WEB_THREADS: "4"
     volumes:
       - uploads:/data/uploads
       - temp:/data/temp
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    restart: unless-stopped
+
+  worker:
+    build: .
+    command: ["/bin/sh", "/opt/render/project/src/start-worker.sh"]
+    environment:
+      DATABASE_URL: postgresql://analizador:${POSTGRES_PASSWORD:-analizador_pass}@db:5432/analizador
+      REDIS_URL: redis://redis:6379/0
+      CLAMAV_HOST: clamav
+      UPLOAD_DIR: /data
+      SECRET_KEY: ${SECRET_KEY:?Define SECRET_KEY en el archivo .env}
+      LOG_FORMAT: json
+      RQ_WORKERS: "2"
+      RQ_QUEUE: vidscan
+      ITEM_TIMEOUT: "1200"
+      MAX_RETRIES: "3"
+    volumes:
+      - uploads:/data/uploads
+      - temp:/data/temp
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os,redis; r=redis.Redis.from_url(os.environ['REDIS_URL']); assert r.ping(); assert len(r.smembers('rq:workers')) > 0"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
     restart: unless-stopped
 
 volumes:
   pgdata:
+  redisdata:
   uploads:
   temp:
   clamav_db:
+  caddy_data:
+  caddy_config:

@@ -25,6 +25,9 @@ class Video(db.Model):
     analysis_result = db.Column(db.Text)
     clamav_result = db.Column(db.String(50))
     sha256 = db.Column(db.String(64))
+    duration = db.Column(db.Float)
+    bitrate = db.Column(db.Integer)
+    has_thumbnail = db.Column(db.Boolean, default=False)
     uploaded_at = db.Column(db.DateTime, default=lambda: datetime.now(UTC))
     session_id = db.Column(db.String(8), db.ForeignKey("sessions.code"), nullable=False)
 
@@ -38,6 +41,9 @@ class Video(db.Model):
             "uploaded_at": self.uploaded_at.isoformat() if self.uploaded_at else None,
             "clamav_result": self.clamav_result,
             "sha256": self.sha256,
+            "duration": self.duration,
+            "bitrate": self.bitrate,
+            "has_thumbnail": bool(self.has_thumbnail),
         }
 
 

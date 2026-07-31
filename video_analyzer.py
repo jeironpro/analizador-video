@@ -47,13 +47,9 @@ def _get_container_format(filepath: str) -> str:
     return format_name.split(",")[0].lower()
 
 
-def _get_streams(filepath: str) -> list[dict[str, Any]]:
-    data = _ffprobe(filepath, ["-show_streams", "-show_format"])
-    return data.get("streams", [])
-
-
 def analyze_video(filepath: str) -> dict[str, Any]:
-    streams = _get_streams(filepath)
+    data = _ffprobe(filepath, ["-show_streams", "-show_format"])
+    streams = data.get("streams", [])
     if not streams:
         raise VideoAnalysisError("El archivo no contiene streams de medios")
 
@@ -122,12 +118,29 @@ def analyze_video(filepath: str) -> dict[str, Any]:
     if container not in ALLOWED_CONTAINERS:
         errors.append(f"Formato de contenedor no permitido: {container}")
 
+    format_info = data.get("format", {}) or {}
     return {
         "valid": len(errors) == 0,
         "errors": errors,
         "container": container,
+        "duration": _parse_duration(format_info.get("duration")),
+        "bitrate": _parse_int(format_info.get("bit_rate")),
         "streams": stream_details,
     }
+
+
+def _parse_duration(value: Any) -> float | None:
+    try:
+        return round(float(value), 2) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_int(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 def _extract_fps(vs: dict) -> float:

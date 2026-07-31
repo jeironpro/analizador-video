@@ -5,6 +5,43 @@ Todas las cambios notables en este proyecto se documentarán en este archivo.
 El formato está basado en [Keep a Changelog](https://keepachangelog.com/),
 y el proyecto adhiere a [Semantic Versioning](https://semver.org/).
 
+## [1.0.0] — 2026-07-31
+
+### Añadido
+- Escaneo con **clamd** (daemon ClamAV en :3310) vía `pyclamd` con stream, con fallback a `clamscan` local (`services/scan.py`)
+- **Procesamiento multi-worker con Redis + RQ**: `services/redis_queue.py`, `services/pipeline.py`, `worker.py`, `start-worker.sh`
+- `QueueManager` ahora persiste en PostgreSQL y encola jobs RQ; fallback inline si Redis no está disponible
+- Rate limiter con ventana deslizante en Redis (degradación a memoria local si no hay Redis)
+- Análisis enriquecido: duración y bitrate global del contenedor
+- **Miniaturas** generadas con ffmpeg y endpoint `/api/thumbnail/<video_id>` (`services/thumbnail.py`)
+- Columnas `duration`, `bitrate`, `has_thumbnail` en `Video` + migración Alembic `3f7c1a9d2b4e`
+- UI: miniatura, duración y bitrate en las tarjetas de video
+- Infraestructura Docker: `redis`, `worker` y `caddy` en `docker-compose.yml` + `Caddyfile`
+- `start.sh` espera PostgreSQL + Redis, aplica migraciones y arranca gunicorn multi-worker (`WEB_WORKERS`)
+
+### Cambiado
+- `services/queue.py`: eliminados scheduler en memoria, `ThreadPoolExecutor`, `_fail_or_retry`, recuperación de items "stuck" (ahora gestionado por RQ `Retry`)
+- `services/config.py`: eliminados umbrales de memoria (`CLAMAV_MIN_MEM_MB/BYTES`); se añaden `REDIS_URL`, `RQ_QUEUE`
+- `video_analyzer.py`: `analyze_video` devuelve `duration` y `bitrate`
+- `worker.py` inicia `CleanupDaemon` una sola vez (deja de correr en cada web worker)
+- `Dockerfile`: deja de instalar ClamAV embebido (usa el servicio clamd) y crea `/data`
+- README actualizado a la arquitectura local/Docker con Redis + Caddy
+
+### Eliminado
+- `services/system.py` (código muerto de límites de memoria) y dependencia `psutil`
+- Imagen clamav `mkodockx/docker-clamav` (abandonada, CDN devuelve 403); reemplazada por `clamav/clamav:latest` oficial
+
+### Arreglado
+- `sslmode=require` forzado en todas las conexiones Postgres → ahora solo se activa si `RENDER` está definido (`app.py`, `alembic/env.py`)
+- `process_video()` no aceptaba `**kwargs` → RQ 1.16+ pasa `timeout` como kwarg al job (`services/pipeline.py`)
+- Worker heredaba `HEALTHCHECK` de la app (HTTP :8080) → healthcheck propio vía Redis (`docker-compose.yml`)
+- `StreamMaxLength` de clamd limitado a 25M por defecto → configurado a 500M (`CLAMD_CONF_StreamMaxLength`)
+
+### Cambiado
+- Caddy sirve por HTTP sin TLS en `:80`, publicado como `8080:80` del host (acceso por IP directa en LAN)
+- Archivo `.env` con `SECRET_KEY` y `POSTGRES_PASSWORD` (ignorado por git)
+- `Caddyfile` reescrito para `:80` sin hostname, con `encode gzip zstd` y `request_body max_size 512MB`
+
 ## [0.7.0] — 2026-07-30
 
 ### Añadido

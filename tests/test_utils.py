@@ -1,38 +1,38 @@
 from unittest.mock import MagicMock, patch
 
-from services.queue import scan_with_clamav
+from services.scan import scan_with_clamav
 from services.validation import validate_file_size, validate_mime_type
 
 
 class TestValidateFileSize:
-    @patch("services.queue.os.path.getsize")
+    @patch("services.validation.os.path.getsize")
     def test_too_small(self, mock_getsize, temp_file):
         mock_getsize.return_value = 1 * 1024 * 1024  # 1 MB
         ok, msg = validate_file_size(temp_file)
         assert not ok
         assert "Demasiado pequeño" in msg
 
-    @patch("services.queue.os.path.getsize")
+    @patch("services.validation.os.path.getsize")
     def test_too_large(self, mock_getsize, temp_file):
         mock_getsize.return_value = 600 * 1024 * 1024  # 600 MB
         ok, msg = validate_file_size(temp_file)
         assert not ok
         assert "Demasiado grande" in msg
 
-    @patch("services.queue.os.path.getsize")
+    @patch("services.validation.os.path.getsize")
     def test_valid(self, mock_getsize, temp_file):
         mock_getsize.return_value = 100 * 1024 * 1024  # 100 MB
         ok, msg = validate_file_size(temp_file)
         assert ok
         assert "100.0 MB" in msg
 
-    @patch("services.queue.os.path.getsize")
+    @patch("services.validation.os.path.getsize")
     def test_boundary_minimum(self, mock_getsize, temp_file):
         mock_getsize.return_value = 50 * 1024 * 1024  # exact minimum
         ok, msg = validate_file_size(temp_file)
         assert ok
 
-    @patch("services.queue.os.path.getsize")
+    @patch("services.validation.os.path.getsize")
     def test_boundary_maximum(self, mock_getsize, temp_file):
         mock_getsize.return_value = 500 * 1024 * 1024  # exact maximum
         ok, msg = validate_file_size(temp_file)
@@ -91,8 +91,10 @@ class TestValidateMimeType:
 
 
 class TestScanWithClamav:
-    @patch("services.queue.subprocess.run")
-    def test_clean(self, mock_run, temp_file):
+    # --- clamscan fallback ---
+    @patch("services.scan._clamd_client", return_value=None)
+    @patch("services.scan.subprocess.run")
+    def test_clean(self, mock_run, mock_client, temp_file):
         mock_result = MagicMock()
         mock_result.returncode = 0
         mock_run.return_value = mock_result
@@ -100,8 +102,9 @@ class TestScanWithClamav:
         assert ok
         assert "limpio" in msg
 
-    @patch("services.queue.subprocess.run")
-    def test_virus_detected(self, mock_run, temp_file):
+    @patch("services.scan._clamd_client", return_value=None)
+    @patch("services.scan.subprocess.run")
+    def test_virus_detected(self, mock_run, mock_client, temp_file):
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout.strip.return_value = "Win.Trojan.Test-1"
@@ -110,15 +113,17 @@ class TestScanWithClamav:
         assert not ok
         assert "Virus detectado" in msg
 
-    @patch("services.queue.subprocess.run")
-    def test_clamav_not_found(self, mock_run, temp_file):
+    @patch("services.scan._clamd_client", return_value=None)
+    @patch("services.scan.subprocess.run")
+    def test_clamav_not_found(self, mock_run, mock_client, temp_file):
         mock_run.side_effect = FileNotFoundError
         ok, msg = scan_with_clamav(temp_file)
         assert ok
         assert "no disponible" in msg
 
-    @patch("services.queue.subprocess.run")
-    def test_timeout(self, mock_run, temp_file):
+    @patch("services.scan._clamd_client", return_value=None)
+    @patch("services.scan.subprocess.run")
+    def test_timeout(self, mock_run, mock_client, temp_file):
         from subprocess import TimeoutExpired
 
         mock_run.side_effect = TimeoutExpired("clamscan", 300)
@@ -126,8 +131,9 @@ class TestScanWithClamav:
         assert ok
         assert "excedió" in msg
 
-    @patch("services.queue.subprocess.run")
-    def test_killed_by_signal(self, mock_run, temp_file):
+    @patch("services.scan._clamd_client", return_value=None)
+    @patch("services.scan.subprocess.run")
+    def test_killed_by_signal(self, mock_run, mock_client, temp_file):
         mock_result = MagicMock()
         mock_result.returncode = -9
         mock_result.stderr.strip.return_value = ""
@@ -136,23 +142,58 @@ class TestScanWithClamav:
         assert ok
         assert "omitido" in msg
 
-    @patch("services.queue.subprocess.run")
-    def test_returncode_2_size_limit(self, mock_run, temp_file):
+    @patch("services.scan._clamd_client", return_value=None)
+    @patch("services.scan.subprocess.run")
+    def test_returncode_2_size_limit(self, mock_run, mock_client, temp_file):
         mock_result = MagicMock()
         mock_result.returncode = 2
         mock_result.stderr.strip.return_value = ""
         mock_run.return_value = mock_result
         ok, msg = scan_with_clamav(temp_file)
         assert ok
-        assert "límite de memoria" in msg
+        assert "límite de tamaño" in msg
 
-    @patch("services.queue.psutil")
-    def test_skipped_when_low_memory(self, mock_psutil, temp_file):
-        from services.config import CLAMAV_MIN_MEM_BYTES
-
-        mock_mem = MagicMock()
-        mock_mem.available = CLAMAV_MIN_MEM_BYTES - 1
-        mock_psutil.virtual_memory.return_value = mock_mem
-        ok, msg = scan_with_clamav(temp_file)
+    # --- clamd path ---
+    def test_clamd_clean(self, temp_file):
+        client = MagicMock()
+        client.scan_stream.return_value = {"stream": ("OK", None)}
+        with patch("services.scan._clamd_client", return_value=client):
+            ok, msg = scan_with_clamav(temp_file)
         assert ok
-        assert "límite de memoria" in msg
+        assert "limpio" in msg
+
+    def test_clamd_clean_empty(self, temp_file):
+        client = MagicMock()
+        client.scan_stream.return_value = {}
+        with patch("services.scan._clamd_client", return_value=client):
+            ok, msg = scan_with_clamav(temp_file)
+        assert ok
+        assert "limpio" in msg
+
+    def test_clamd_virus(self, temp_file):
+        client = MagicMock()
+        client.scan_stream.return_value = {"stream": ("FOUND", "Eicar-Test-Signature")}
+        with patch("services.scan._clamd_client", return_value=client):
+            ok, msg = scan_with_clamav(temp_file)
+        assert not ok
+        assert "Virus detectado" in msg
+        assert "Eicar-Test-Signature" in msg
+
+    def test_clamd_buffer_too_long(self, temp_file):
+        import pyclamd
+
+        client = MagicMock()
+        client.scan_stream.side_effect = pyclamd.BufferTooLongError
+        with patch("services.scan._clamd_client", return_value=client):
+            ok, msg = scan_with_clamav(temp_file)
+        assert ok
+        assert "límite de tamaño" in msg
+
+    def test_clamd_connection_error_falls_back(self, temp_file):
+        client = MagicMock()
+        client.scan_stream.side_effect = ConnectionError
+        with patch("services.scan._clamd_client", return_value=client):
+            with patch("services.scan._scan_with_clamscan", return_value=(True, "Archivo limpio")) as mock_fallback:
+                ok, msg = scan_with_clamav(temp_file)
+        assert ok
+        mock_fallback.assert_called_once()

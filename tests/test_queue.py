@@ -1,5 +1,3 @@
-import os
-import time
 from unittest.mock import patch
 
 
@@ -76,57 +74,32 @@ class TestQueueLog:
         assert len(qm.get("id-1")["logs"]) == 2
 
 
-class TestQueueFailRetry:
-    def test_fail_triggers_retry(self, qm):
-        qm._max_retries = 3
+class TestQueueEnqueueFallback:
+    @patch("services.queue.redis_available", return_value=False)
+    @patch("services.queue.QueueManager._process_inline")
+    def test_enqueue_processes_inline_without_redis(self, mock_inline, mock_available, qm):
         qm.add("id-1", "/tmp/a.mp4", "a.mp4", "v.mp4", ".mp4", "SESS001")
-        qm._fail_or_retry("id-1", "error msg")
-        item = qm.get("id-1")
-        assert item["retries"] == 1
-        assert item["status"] == "queued"
+        qm.enqueue("id-1")
+        assert qm.get("id-1")["status"] == "queued"
+        mock_inline.assert_called_once_with("id-1")
 
-    def test_fail_exhausts_retries(self, qm):
-        qm._max_retries = 2
+    @patch("services.queue.redis_available", return_value=True)
+    @patch("services.queue.get_rq_queue")
+    def test_enqueue_rq_with_redis(self, mock_queue, mock_available, qm):
         qm.add("id-1", "/tmp/a.mp4", "a.mp4", "v.mp4", ".mp4", "SESS001")
-        qm._fail_or_retry("id-1", "err1")
-        qm._fail_or_retry("id-1", "err2")
-        item = qm.get("id-1")
-        assert item["retries"] == 2
-        assert item["status"] == "error"
-        assert "err2" in item["error"]
-
-    def test_fail_non_existent_item(self, qm):
-        qm._fail_or_retry("no-exist", "error")
-        # Should not raise
-
-
-class TestQueueStaleProcessing:
-    def test_recover_stale(self, qm):
-        qm._item_timeout = 1
-        qm.add("id-1", "/tmp/a.mp4", "a.mp4", "v.mp4", ".mp4", "SESS001")
-        qm.update_status("id-1", "processing")
-        # First call sets started_at; second call recovers it
-        qi = qm._queue["id-1"]
-        qi["started_at"] = time.time() - 5  # artificially age it
-        qm._recover_stale_processing()
-        item = qm.get("id-1")
-        assert item["status"] == "queued", "stale processing item should be recovered"
-
-    def test_no_recover_within_timeout(self, qm):
-        qm._item_timeout = 60
-        qm.add("id-1", "/tmp/a.mp4", "a.mp4", "v.mp4", ".mp4", "SESS001")
-        qm.update_status("id-1", "processing")
-        qm._recover_stale_processing()
-        item = qm.get("id-1")
-        assert item["status"] == "processing", "item within timeout should not recover"
+        qm.enqueue("id-1")
+        assert qm.get("id-1")["status"] == "queued"
+        mock_queue.return_value.enqueue.assert_called_once()
 
 
 class TestQueueProcessItem:
-    @patch("services.queue.analyze_video")
-    @patch("services.queue.scan_with_clamav")
-    @patch("services.queue.validate_mime_type")
-    @patch("services.queue.validate_file_size")
+    @patch("services.pipeline.analyze_video")
+    @patch("services.pipeline.scan_with_clamav")
+    @patch("services.pipeline.validate_mime_type")
+    @patch("services.pipeline.validate_file_size")
     def test_process_item_success(self, mock_size, mock_mime, mock_clam, mock_analyze, qm, app):
+        from services import pipeline
+
         mock_size.return_value = (True, "100.0 MB")
         mock_mime.return_value = (True, "video/mp4")
         mock_clam.return_value = (True, "Archivo limpio")
@@ -136,6 +109,8 @@ class TestQueueProcessItem:
             "streams": [],
             "errors": [],
         }
+
+        import os
 
         temp_dir = app.config["TEMP_FOLDER"]
         filepath = os.path.join(temp_dir, "test_video.mp4")
@@ -150,19 +125,22 @@ class TestQueueProcessItem:
             ".mp4",
             "SESS001",
         )
-        qm.update_status("id-1", "processing")
-        qm._process_item("id-1")
+        pipeline._process_with_queue(qm, "id-1")
 
         item = qm.get("id-1")
         assert item["status"] == "done"
         assert item["result"] is not None
         assert item["result"]["original_name"] == "test_video.mp4"
 
-    @patch("services.queue.analyze_video")
-    @patch("services.queue.scan_with_clamav")
-    @patch("services.queue.validate_mime_type")
-    @patch("services.queue.validate_file_size")
-    def test_process_item_retry_then_error(self, mock_size, mock_mime, mock_clam, mock_analyze, qm, app):
+    @patch("services.pipeline.validate_file_size")
+    def test_process_item_validation_failure(self, mock_size, qm, app):
+        import os
+
+        import pytest
+
+        from services import pipeline
+        from services.pipeline import PipelineError
+
         qm._max_retries = 1
         mock_size.return_value = (False, "Demasiado pequeño")
 
@@ -172,23 +150,9 @@ class TestQueueProcessItem:
             f.write(b"x" * 1024)
 
         qm.add("id-1", filepath, "small.mp4", "small.mp4", ".mp4", "SESS001")
-        qm.update_status("id-1", "processing")
-        qm._process_item("id-1")
+        with pytest.raises(PipelineError):
+            pipeline._process_with_queue(qm, "id-1")
 
         item = qm.get("id-1")
-        assert item["status"] == "error"
+        assert item["status"] == "queued"
         assert "Demasiado pequeño" in item["error"]
-
-
-class TestQueueShutdown:
-    def test_shutdown_resets_processing_items(self, qm, app):
-        qm.add("id-1", "/tmp/a.mp4", "a.mp4", "v.mp4", ".mp4", "SESS001")
-        qm.add("id-2", "/tmp/b.mp4", "b.mp4", "v2.mp4", ".mp4", "SESS001")
-        qm._queue["id-1"]["status"] = "processing"
-        qm._queue["id-2"]["status"] = "processing"
-
-        qm._shutdown = True
-        qm._shutdown_cleanup()
-
-        assert qm.get("id-1")["status"] == "queued"
-        assert qm.get("id-2")["status"] == "queued"

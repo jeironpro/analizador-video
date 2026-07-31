@@ -28,14 +28,11 @@ ALLOWED_MIMES: set[str] = {
     "video/x-ms-wmv",
 }
 
-CLAMAV_MAX_SIZE = 200 * 1024 * 1024
+CLAMAV_MAX_MB = int(os.environ.get("CLAMAV_MAX_MB", "500"))
 
-# Si hay menos RAM disponible que este umbral se omite el escaneo para evitar
-# un OOM-kill. Configurable via CLAMAV_MIN_MEM_MB (en MiB).
-CLAMAV_MIN_MEM_MB = int(os.environ.get("CLAMAV_MIN_MEM_MB", "200"))
-CLAMAV_MIN_MEM_BYTES = CLAMAV_MIN_MEM_MB * 1024 * 1024
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+RQ_QUEUE = os.environ.get("RQ_QUEUE", "vidscan")
 
 MAX_RETRIES = 3
 MAX_QUEUE_ITEMS = 20
 SESSION_DAYS = 7
-ITEM_TIMEOUT = 600

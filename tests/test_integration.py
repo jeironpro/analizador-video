@@ -5,14 +5,14 @@ import pytest
 
 # Patch targets:
 #   app.XX → upload endpoint (which imports validate_mime_type locally)
-#   services.queue.XX → _process_item (calls them from the same module)
+#   services.pipeline.XX → process_video (calls them from the same module)
 UPLOAD_PATCHES = [
     patch("app.validate_mime_type", return_value=(True, "video/mp4")),
-    patch("services.queue.validate_mime_type", return_value=(True, "video/mp4")),
-    patch("services.queue.validate_file_size", return_value=(True, "100.0 MB")),
-    patch("services.queue.scan_with_clamav", return_value=(True, "Archivo limpio")),
+    patch("services.pipeline.validate_mime_type", return_value=(True, "video/mp4")),
+    patch("services.pipeline.validate_file_size", return_value=(True, "100.0 MB")),
+    patch("services.pipeline.scan_with_clamav", return_value=(True, "Archivo limpio")),
     patch(
-        "services.queue.analyze_video",
+        "services.pipeline.analyze_video",
         return_value={
             "valid": True,
             "container": "mp4",
@@ -185,6 +185,29 @@ class TestVideos:
 
     def test_delete_nonexistent(self, client, session_code):
         r = client.delete("/api/delete/no-exist")
+        assert r.status_code == 404
+
+    def test_thumbnail_nonexistent_video(self, client, session_code):
+        r = client.get("/api/thumbnail/no-exist")
+        assert r.status_code == 404
+
+    def test_thumbnail_when_no_thumbnail(self, client, session_code):
+        from app import app
+        from models import Video, db
+
+        with app.app_context():
+            video = Video(
+                id="vid-thumb-1",
+                filename="v.mp4",
+                original_name="v.mp4",
+                size=100,
+                container="mp4",
+                mime_type="video/mp4",
+                session_id=session_code,
+            )
+            db.session.add(video)
+            db.session.commit()
+        r = client.get("/api/thumbnail/vid-thumb-1")
         assert r.status_code == 404
 
 

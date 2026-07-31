@@ -16,6 +16,11 @@ click==8.4.2
     # via
     #   -r requirements.txt
     #   flask
+    #   rq
+croniter==6.2.4
+    # via
+    #   -r requirements.txt
+    #   rq
 distlib==0.4.3
     # via virtualenv
 filelock==3.32.0
@@ -72,22 +77,36 @@ pluggy==1.6.0
     # via pytest
 pre-commit==4.6.1
     # via -r test-requirements.in
-psutil==7.2.2
-    # via -r requirements.txt
 psycopg2-binary==2.9.12
+    # via -r requirements.txt
+pyclamd==0.4.0
     # via -r requirements.txt
 pygments==2.20.0
     # via pytest
 pytest==9.1.1
     # via -r test-requirements.in
+python-dateutil==2.9.0.post0
+    # via
+    #   -r requirements.txt
+    #   croniter
 python-discovery==1.5.0
     # via virtualenv
 python-magic==0.4.27
     # via -r requirements.txt
 pyyaml==6.0.3
     # via pre-commit
+redis==8.1.0
+    # via
+    #   -r requirements.txt
+    #   rq
+rq==2.10.0
+    # via -r requirements.txt
 ruff==0.16.0
     # via -r test-requirements.in
+six==1.17.0
+    # via
+    #   -r requirements.txt
+    #   python-dateutil
 sqlalchemy==2.0.51
     # via
     #   -r requirements.txt

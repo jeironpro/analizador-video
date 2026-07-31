@@ -117,6 +117,19 @@
   function formatDate(iso) {
     return new Date(iso).toLocaleString('es-ES');
   }
+  function formatDuration(seconds) {
+    if (!seconds && seconds !== 0) return null;
+    const s = Math.floor(seconds);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    return h > 0 ? h + ':' + String(m).padStart(2, '0') + ':' + String(sec).padStart(2, '0') : m + ':' + String(sec).padStart(2, '0');
+  }
+  function formatBitrate(bps) {
+    if (!bps) return null;
+    if (bps >= 1000000) return (bps / 1000000).toFixed(1) + ' Mbps';
+    return Math.round(bps / 1000) + ' kbps';
+  }
   function escapeHtml(text) {
     const d = document.createElement('div');
     d.textContent = text;
@@ -468,8 +481,12 @@
     videos.forEach(v => {
       const ext = v.container || '?';
       const icon = iconForExt(ext);
+      const dur = formatDuration(v.duration);
+      const br = formatBitrate(v.bitrate);
+      const thumb = v.has_thumbnail ? '<img src="/api/thumbnail/' + v.id + '" class="video-thumb" alt="' + escapeHtml(v.original_name) + '" loading="lazy">' : '';
       html += `
         <div class="video-card p-3">
+          ${thumb}
           <div class="d-flex justify-content-between align-items-start mb-2">
             <div class="text-truncate me-2">
               <i class="bi ${icon} text-primary me-1"></i>
@@ -479,6 +496,8 @@
           </div>
           <div class="d-flex gap-2 mb-2 flex-wrap">
             <span class="badge bg-info bg-opacity-10 text-info border border-info border-opacity-25">${formatSize(v.size)}</span>
+            ${dur ? '<span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25"><i class="bi bi-clock"></i> ' + dur + '</span>' : ''}
+            ${br ? '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25"><i class="bi bi-speedometer"></i> ' + br + '</span>' : ''}
             ${v.mime_type ? '<span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25">' + escapeHtml(v.mime_type) + '</span>' : ''}
             ${v.clamav_result === 'Archivo limpio' ? '<span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25"><i class="bi bi-shield-check"></i> Seguro</span>' : (v.clamav_result ? '<span class="badge bg-warning bg-opacity-10 text-warning border border-warning border-opacity-25" title="' + escapeHtml(v.clamav_result) + '"><i class="bi bi-shield-exclamation"></i> ' + escapeHtml(v.clamav_result) + '</span>' : '')}
           </div>
