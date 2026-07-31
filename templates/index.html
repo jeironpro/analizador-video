@@ -95,17 +95,24 @@
         <h5 class="mb-0 d-flex align-items-center gap-2">
           <i class="bi bi-list-task text-warning"></i> Cola de Procesamiento
         </h5>
-        <span class="badge bg-warning bg-opacity-25 text-warning px-3 py-2" id="queueCount">0</span>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-sm btn-outline-danger rounded-pill d-none" id="queueDeleteAllBtn" onclick="window._deleteAllQueue()"><i class="bi bi-trash3"></i> Eliminar todo</button>
+          <span class="badge bg-warning bg-opacity-25 text-warning px-3 py-2" id="queueCount">0</span>
+        </div>
       </div>
       <div class="p-3" id="queueContainer"></div>
     </div>
 
     <!-- Videos -->
     <div class="card-custom mt-4">
-      <div class="card-header-custom">
+      <div class="card-header-custom d-flex justify-content-between align-items-center flex-wrap gap-2">
         <h5 class="mb-0 d-flex align-items-center gap-2">
           <i class="bi bi-film text-success"></i> Videos Almacenados
         </h5>
+        <div class="d-flex align-items-center gap-2">
+          <button class="btn btn-sm btn-outline-success rounded-pill d-none" id="videoDownloadAllBtn" onclick="window._downloadSelected()"><i class="bi bi-download"></i> Descargar <span id="videoSelectedCount">0</span></button>
+          <button class="btn btn-sm btn-outline-danger rounded-pill" id="videoDeleteAllBtn" onclick="window._deleteAllVideos()"><i class="bi bi-trash3"></i> Eliminar todo</button>
+        </div>
       </div>
       <div class="p-3">
         <div class="video-grid" id="videoContainer">

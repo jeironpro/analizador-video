@@ -62,7 +62,7 @@ def generate_thumbnail(filepath: str, output_path: str, duration: float | None =
 def _pick_timestamp(duration: float | None) -> float:
     if not duration or duration <= 0:
         return 1.0
-    return round(min(1.0, max(0.0, duration * 0.1)), 2)
+    return round(max(1.0, min(duration * 0.1, 30.0)), 2)
 
 
 # ---------------------------------------------------------------------------

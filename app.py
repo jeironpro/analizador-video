@@ -616,6 +616,86 @@ def delete(video_id: str) -> tuple[Response, int]:
     return jsonify({"message": "Video eliminado correctamente"}), 200
 
 
+@app.route("/api/videos", methods=["DELETE"])
+def delete_all_videos() -> tuple[Response, int]:
+    code = _session_required()
+    if not code:
+        return jsonify({"error": "Sesión no válida"}), 401
+    videos = Video.query.filter_by(session_id=code).all()
+    for video in videos:
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], video.session_id, video.filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+        thumbpath = os.path.join(app.config["UPLOAD_FOLDER"], video.session_id, f"{video.id}.jpg")
+        if os.path.exists(thumbpath):
+            os.remove(thumbpath)
+        db.session.delete(video)
+    db.session.commit()
+    return jsonify({"message": "Todos los videos eliminados"}), 200
+
+
+@app.route("/api/queue", methods=["DELETE"])
+def delete_all_queue() -> tuple[Response, int]:
+    code = _session_required()
+    if not code:
+        return jsonify({"error": "Sesión no válida"}), 401
+    from models import QueueItem
+
+    items = QueueItem.query.filter_by(session_id=code).all()
+    for qi in items:
+        if os.path.exists(qi.temp_path):
+            os.remove(qi.temp_path)
+        db.session.delete(qi)
+    db.session.commit()
+    return jsonify({"message": "Cola eliminada"}), 200
+
+
+@app.route("/api/download", methods=["POST"])
+def download_selected() -> tuple[Response, int] | Response:
+    code = _session_required()
+    if not code:
+        return jsonify({"error": "Sesión no válida"}), 401
+    data = request.get_json(silent=True)
+    if not data or not isinstance(data.get("ids"), list):
+        return jsonify({"error": "ids esperado como lista"}), 400
+    ids = data["ids"]
+    if not ids:
+        return jsonify({"error": "No se especificaron IDs"}), 400
+
+    videos = Video.query.filter(Video.id.in_(ids), Video.session_id == code).all()
+    if not videos:
+        return jsonify({"error": "Videos no encontrados"}), 404
+
+    if len(videos) == 1:
+        v = videos[0]
+        filepath = os.path.join(app.config["UPLOAD_FOLDER"], v.session_id, v.filename)
+        if not os.path.exists(filepath):
+            return jsonify({"error": "Archivo no encontrado"}), 404
+        return send_file(
+            filepath,
+            mimetype=v.mime_type or "application/octet-stream",
+            as_attachment=True,
+            download_name=v.original_name,
+        )
+
+    import io
+    import zipfile
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for v in videos:
+            filepath = os.path.join(app.config["UPLOAD_FOLDER"], v.session_id, v.filename)
+            if os.path.exists(filepath):
+                zf.write(filepath, v.original_name)
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name="vidscan_videos.zip",
+    ), 200
+
+
 # ---------------------------------------------------------------------------
 # Error pages
 # ---------------------------------------------------------------------------

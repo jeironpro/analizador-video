@@ -449,6 +449,7 @@
     });
 
     document.getElementById('queueCount').textContent = activeCount;
+    document.getElementById('queueDeleteAllBtn').classList.toggle('d-none', items.length === 0);
     queueCard.classList.toggle('d-none', items.length === 0);
     if (items.length === 0) queueContainer.innerHTML = '';
   }
@@ -473,6 +474,9 @@
     const label = videos.length + ' video' + (videos.length !== 1 ? 's' : '');
     document.getElementById('videoCountDesk').textContent = label;
     document.getElementById('videoCountMob').textContent = label;
+    document.getElementById('videoDeleteAllBtn').classList.toggle('d-none', videos.length === 0);
+    document.getElementById('videoDownloadAllBtn').classList.add('d-none');
+    document.getElementById('videoSelectedCount').textContent = '0';
     if (videos.length === 0) {
       videoContainer.innerHTML = '<div class="empty-state"><i class="bi bi-film"></i><p class="mb-0">No hay videos almacenados</p></div>';
       return;
@@ -486,6 +490,7 @@
       const thumb = v.has_thumbnail ? '<img src="/api/thumbnail/' + v.id + '" class="video-thumb" alt="' + escapeHtml(v.original_name) + '" loading="lazy">' : '';
       html += `
         <div class="video-card p-3">
+          <div class="video-card-check"><input type="checkbox" class="form-check-input vc-check" data-video-id="${v.id}" onchange="window._onVideoSelect()"></div>
           ${thumb}
           <div class="d-flex justify-content-between align-items-start mb-2">
             <div class="text-truncate me-2">
@@ -553,6 +558,71 @@
         else r.json().then(d => showToast(d.error || 'Error al eliminar', 'error'));
       })
       .catch(() => showToast('Error de conexión', 'error'));
+  };
+
+  window._deleteAllVideos = async function () {
+    const ok = await showConfirm('¿Eliminar TODOS los videos almacenados? Esta acción no se puede deshacer.');
+    if (!ok) return;
+    fetch('/api/videos', { method: 'DELETE' })
+      .then(r => {
+        if (r.ok) { loadVideos(); showToast('Todos los videos eliminados', 'success'); }
+        else r.json().then(d => showToast(d.error || 'Error al eliminar', 'error'));
+      })
+      .catch(() => showToast('Error de conexión', 'error'));
+  };
+
+  window._deleteAllQueue = async function () {
+    const ok = await showConfirm('¿Eliminar TODOS los items de la cola?');
+    if (!ok) return;
+    fetch('/api/queue', { method: 'DELETE' })
+      .then(r => {
+        if (r.ok) { loadQueue(); showToast('Cola eliminada', 'success'); }
+        else r.json().then(d => showToast(d.error || 'Error al eliminar', 'error'));
+      })
+      .catch(() => showToast('Error de conexión', 'error'));
+  };
+
+  window._onVideoSelect = function () {
+    const checks = document.querySelectorAll('.vc-check:checked');
+    const total = document.querySelectorAll('.vc-check').length;
+    const cnt = checks.length;
+    const btn = document.getElementById('videoDownloadAllBtn');
+    const sel = document.getElementById('videoSelectedCount');
+    if (cnt > 0) {
+      btn.classList.remove('d-none');
+      sel.textContent = cnt;
+    } else {
+      btn.classList.add('d-none');
+    }
+    const selectAll = document.querySelector('.vc-select-all');
+    if (selectAll) selectAll.indeterminate = cnt > 0 && cnt < total;
+  };
+
+  window._downloadSelected = function () {
+    const ids = Array.from(document.querySelectorAll('.vc-check:checked')).map(c => c.dataset.videoId);
+    if (!ids.length) { showToast('Selecciona al menos un video', 'warning'); return; }
+    if (ids.length === 1) {
+      window.location.href = '/api/download/' + ids[0];
+      return;
+    }
+    fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: ids }),
+    })
+      .then(r => {
+        if (!r.ok) return r.json().then(d => { throw new Error(d.error || 'Error') });
+        return r.blob();
+      })
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'vidscan_videos.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+      })
+      .catch(e => showToast(e.message, 'error'));
   };
 
   // ───────── Init ─────────
